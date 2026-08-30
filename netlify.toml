@@ -1,0 +1,6 @@
+[build]
+  command = "pnpm build"
+  publish = "dist"
+
+[build.environment]
+  VITE_API_BASE = "https://visulalizer-api.onrender.com"

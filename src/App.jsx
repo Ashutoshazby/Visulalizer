@@ -8,16 +8,19 @@ import TimeDisplay from "./components/TimeDisplay.jsx";
 import { AudioEngine } from "./audio/AudioEngine.js";
 import { getCurrentMood, getTimeMessage } from "./mood/MoodEngine.js";
 import { selectSong } from "./music/SongSelector.js";
-import { getRecommendations } from "./music/MusicProvider.js";
+import { API_BASE, getRecommendations, getStreamUrl } from "./music/MusicProvider.js";
 import { loadPreferences, recordPlay, recordSelection, savePreferences } from "./storage/UserPreferences.js";
 
 const INITIAL_AUDIO = { bass: 0, mid: 0, treble: 0, energy: 0, beat: 0 };
+const MAX_FAILED_SONGS = 5;
 
 export default function App() {
   const audioEngine = useRef(null);
   const audioRef = useRef(null);
   const playlistRef = useRef([]);
   const songIndexRef = useRef(-1);
+  const failedSongIdsRef = useRef(new Set());
+  const audioFailuresRef = useRef(0);
   const [started, setStarted] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -44,25 +47,45 @@ export default function App() {
   }, []);
 
   const playSong = useCallback(async (nextSong, nextIndex) => {
-    if (!nextSong?.streamUrl) {
-      setStatus("That track did not expose a playable stream. Trying another road.");
-      return;
+    if (!nextSong?.id) {
+      setStatus("That track is missing a playable song id. Trying another road.");
+      return false;
     }
     setSong(nextSong);
     songIndexRef.current = nextIndex;
     const audio = audioRef.current;
-    audio.src = nextSong.streamUrl;
-    audio.crossOrigin = "anonymous";
+    const streamEndpoint = getStreamUrl(nextSong);
+    configureAudioForApi(audio);
     audio.volume = volume;
     audio.muted = muted;
+    audio.preload = "auto";
+
+    if (import.meta.env.DEV) {
+      console.info("[NightDrive] selected song", {
+        id: nextSong.id,
+        title: nextSong.title,
+        streamEndpoint,
+        apiBase: API_BASE
+      });
+    }
+
     try {
+      await loadAudioSource(audio, streamEndpoint);
       await audio.play();
       setPlaying(true);
       setStatus("");
+      audioFailuresRef.current = 0;
       refreshPreferences(recordPlay(loadPreferences(), nextSong, moodContext));
-    } catch {
+      return true;
+    } catch (error) {
+      failedSongIdsRef.current.add(nextSong.id);
+      audioFailuresRef.current += 1;
       setPlaying(false);
-      setStatus("Tap START DRIVE to let the browser unlock audio.");
+      logAudioError(audio, nextSong, streamEndpoint, error);
+      setStatus(audioFailuresRef.current >= MAX_FAILED_SONGS
+        ? "Several songs failed to stream. Please try again in a bit."
+        : "That song could not stream. Trying another road song.");
+      return false;
     }
   }, [moodContext, muted, refreshPreferences, volume]);
 
@@ -80,13 +103,19 @@ export default function App() {
       const currentSongId = song?.id;
       const firstIndex = Math.max(0, ranked.findIndex((candidate) => candidate.id !== currentSongId));
       playlistRef.current = ranked;
-      await playSong(ranked[firstIndex], firstIndex);
+      failedSongIdsRef.current.clear();
+      for (let index = firstIndex; index < ranked.length; index += 1) {
+        const played = await playSong(ranked[index], index);
+        if (played) return;
+        if (audioFailuresRef.current >= MAX_FAILED_SONGS) return;
+      }
     } catch (error) {
       setStatus(`Music provider is unavailable: ${error.message}`);
     }
   }, [moodContext, playSong, preferences, song?.id]);
 
   const startDrive = useCallback(async () => {
+    configureAudioForApi(audioRef.current);
     if (!audioEngine.current) {
       audioEngine.current = new AudioEngine(audioRef.current, setAudioData);
     }
@@ -98,9 +127,13 @@ export default function App() {
   const next = useCallback(async () => {
     const queue = playlistRef.current;
     if (!queue.length) return loadDriveQueue();
-    if (songIndexRef.current >= queue.length - 1) return loadDriveQueue();
-    const nextIndex = songIndexRef.current + 1;
-    await playSong(queue[nextIndex], nextIndex);
+    for (let nextIndex = songIndexRef.current + 1; nextIndex < queue.length; nextIndex += 1) {
+      if (failedSongIdsRef.current.has(queue[nextIndex]?.id)) continue;
+      const played = await playSong(queue[nextIndex], nextIndex);
+      if (played) return;
+      if (audioFailuresRef.current >= MAX_FAILED_SONGS) return;
+    }
+    return loadDriveQueue();
   }, [loadDriveQueue, playSong]);
 
   const previous = useCallback(async () => {
@@ -110,17 +143,48 @@ export default function App() {
     await playSong(queue[nextIndex], nextIndex);
   }, [playSong]);
 
+  const handleAudioError = useCallback(async (event) => {
+    const audio = audioRef.current;
+    if (audio?.dataset.loadingSource === "true") return;
+    const failedSong = playlistRef.current[songIndexRef.current];
+    if (failedSong?.id) failedSongIdsRef.current.add(failedSong.id);
+    audioFailuresRef.current += 1;
+    logAudioError(audio, failedSong, audio?.currentSrc || audio?.src, event);
+
+    if (audioFailuresRef.current >= MAX_FAILED_SONGS) {
+      setPlaying(false);
+      setStatus("Several songs failed to stream. Please try another mood or try again later.");
+      return;
+    }
+
+    const queue = playlistRef.current;
+    for (let nextIndex = songIndexRef.current + 1; nextIndex < queue.length; nextIndex += 1) {
+      if (failedSongIdsRef.current.has(queue[nextIndex]?.id)) continue;
+      const played = await playSong(queue[nextIndex], nextIndex);
+      if (played) return;
+    }
+
+    await loadDriveQueue();
+  }, [loadDriveQueue, playSong]);
+
   const togglePlay = useCallback(async () => {
     const audio = audioRef.current;
     if (!started) return startDrive();
     if (audio.paused) {
-      await audio.play();
-      setPlaying(true);
+      try {
+        await audio.play();
+        setPlaying(true);
+        setStatus("");
+      } catch (error) {
+        setPlaying(false);
+        logAudioError(audio, song, audio.currentSrc || audio.src, error);
+        setStatus("Audio playback was blocked or failed. Tap play again in a moment.");
+      }
     } else {
       audio.pause();
       setPlaying(false);
     }
-  }, [startDrive, started]);
+  }, [song, startDrive, started]);
 
   const updateMood = (value) => {
     setMoodOverride(value);
@@ -194,7 +258,7 @@ export default function App() {
 
   return (
     <main className={`app mood-${moodContext.mood} phase-${moodContext.phase}`}>
-      <audio ref={audioRef} onEnded={next} onError={next} />
+      <audio ref={audioRef} preload="auto" onEnded={next} onError={handleAudioError} />
       <DrivingScene audioData={audioData} moodContext={moodContext} song={song} playing={playing} visualSpeed={visualSpeed} />
       <button className="fullscreen-button" onClick={toggleFullscreen} title={fullscreen ? "Exit fullscreen" : "Fullscreen"} aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}>
         {fullscreen ? "↙" : "⛶"}
@@ -236,4 +300,73 @@ export default function App() {
       </div>
     </main>
   );
+}
+
+function configureAudioForApi(audio) {
+  if (!audio) return;
+  const apiOrigin = new URL(API_BASE, window.location.origin).origin;
+  if (apiOrigin === window.location.origin) {
+    audio.removeAttribute("crossorigin");
+    audio.crossOrigin = null;
+    return;
+  }
+  audio.crossOrigin = "anonymous";
+}
+
+function loadAudioSource(audio, streamEndpoint) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeout = window.setTimeout(() => finish(new Error("Audio load timed out.")), 12000);
+
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      delete audio.dataset.loadingSource;
+      audio.removeEventListener("canplay", onCanPlay);
+      audio.removeEventListener("loadedmetadata", onLoadedMetadata);
+      audio.removeEventListener("error", onError);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onCanPlay = () => finish();
+    const onLoadedMetadata = () => {
+      if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) finish();
+    };
+    const onError = () => finish(new Error(readMediaError(audio)));
+
+    audio.dataset.loadingSource = "true";
+    audio.pause();
+    audio.addEventListener("canplay", onCanPlay, { once: true });
+    audio.addEventListener("loadedmetadata", onLoadedMetadata);
+    audio.addEventListener("error", onError, { once: true });
+    audio.src = streamEndpoint;
+    audio.load();
+  });
+}
+
+function logAudioError(audio, song, streamEndpoint, errorEvent) {
+  const details = {
+    songId: song?.id,
+    title: song?.title,
+    streamEndpoint,
+    readyState: audio?.readyState,
+    networkState: audio?.networkState,
+    mediaError: readMediaError(audio),
+    eventType: errorEvent?.type,
+    error: errorEvent instanceof Error ? errorEvent.message : undefined
+  };
+  console.warn("[NightDrive] audio error", details);
+}
+
+function readMediaError(audio) {
+  const error = audio?.error;
+  if (!error) return "No media error reported.";
+  const labels = {
+    1: "MEDIA_ERR_ABORTED",
+    2: "MEDIA_ERR_NETWORK",
+    3: "MEDIA_ERR_DECODE",
+    4: "MEDIA_ERR_SRC_NOT_SUPPORTED"
+  };
+  return `${labels[error.code] || `MEDIA_ERR_${error.code}`}${error.message ? `: ${error.message}` : ""}`;
 }

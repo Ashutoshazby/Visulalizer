@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE || window.location.origin;
+export const API_BASE = import.meta.env.VITE_API_BASE || window.location.origin;
 
 export async function getRecommendations({ mood, language, limit = 18 }) {
   const url = new URL("/api/music/recommendations", API_BASE);
@@ -16,6 +16,13 @@ export async function searchSongs({ query, language, limit = 12 }) {
   url.searchParams.set("limit", String(limit));
   const json = await fetchJson(url);
   return json.songs || [];
+}
+
+export function getStreamUrl(song) {
+  if (!song?.id) return "";
+  const url = new URL("/api/music/stream", API_BASE);
+  url.searchParams.set("id", song.id);
+  return url.toString();
 }
 
 async function fetchJson(url) {
