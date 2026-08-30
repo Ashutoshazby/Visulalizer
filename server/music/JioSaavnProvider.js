@@ -1,4 +1,4 @@
-import crypto from "node:crypto";
+import CryptoJS from "crypto-js";
 import { MusicProvider } from "./MusicProvider.js";
 
 const MOOD_QUERIES = {
@@ -77,6 +77,7 @@ class JioSaavnProvider extends MusicProvider {
       const raw = Array.isArray(json?.data) ? json.data[0] : json?.data;
       const normalized = this.normalizeSong(raw);
       if (!normalized.id) throw new Error("Invalid song response.");
+      if (isPreviewStream(normalized.streamUrl)) return this.getNativeSong(id);
       return normalized;
     } catch {
       return this.getNativeSong(id);
@@ -196,13 +197,20 @@ function clean(value) {
 function decryptMediaUrl(encryptedMediaUrl, hasHighQuality) {
   if (!encryptedMediaUrl) return "";
   try {
-    const decipher = crypto.createDecipheriv("des-ecb", Buffer.from("38346591"), null);
-    decipher.setAutoPadding(true);
-    const mediaUrl = decipher.update(encryptedMediaUrl, "base64", "utf8") + decipher.final("utf8");
+    const key = CryptoJS.enc.Utf8.parse("38346591");
+    const mediaUrl = CryptoJS.DES.decrypt(
+      { ciphertext: CryptoJS.enc.Base64.parse(encryptedMediaUrl) },
+      key,
+      { mode: CryptoJS.mode.ECB, padding: CryptoJS.pad.Pkcs7 }
+    ).toString(CryptoJS.enc.Utf8);
     return (hasHighQuality ? mediaUrl.replace("_96.mp4", "_320.mp4") : mediaUrl).replace(/^http:/, "https:");
   } catch {
     return "";
   }
+}
+
+function isPreviewStream(url) {
+  return /preview\.saavncdn\.com/i.test(String(url || ""));
 }
 
 function inferMoods(text) {
