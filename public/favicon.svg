@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Night Drive Radio">
+  <defs>
+    <linearGradient id="sky" x1="10" x2="54" y1="6" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#101820"/>
+      <stop offset="1" stop-color="#050809"/>
+    </linearGradient>
+    <linearGradient id="road" x1="32" x2="32" y1="27" y2="60" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#263635"/>
+      <stop offset="1" stop-color="#111716"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#sky)"/>
+  <path d="M7 44c7-9 16-14 25-14s18 5 25 14v16H7V44Z" fill="url(#road)"/>
+  <path d="M30 32 22 60h20L34 32h-4Z" fill="#0b0f10"/>
+  <path d="M32 34v8M32 47v8" stroke="#e6d977" stroke-width="2.8" stroke-linecap="round"/>
+  <path d="M17 36h7M40 36h7" stroke="#7fd8e6" stroke-width="2.4" stroke-linecap="round" opacity=".75"/>
+  <circle cx="23" cy="48" r="4.2" fill="#f2d37a" filter="url(#glow)"/>
+  <circle cx="41" cy="48" r="4.2" fill="#f2d37a" filter="url(#glow)"/>
+  <path d="M21 49h22" stroke="#9be6ee" stroke-width="2" stroke-linecap="round" opacity=".8"/>
+  <path d="M17 20c3-4 7-6 15-6s12 2 15 6" fill="none" stroke="#7fd8e6" stroke-width="3" stroke-linecap="round" opacity=".9"/>
+  <path d="M20 24c3-3 6-4 12-4s9 1 12 4" fill="none" stroke="#7fd8e6" stroke-width="2" stroke-linecap="round" opacity=".55"/>
+</svg>
