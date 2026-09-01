@@ -24,7 +24,8 @@ export default function DrivingScene({ audioData, moodContext, song, playing, vi
       last = now;
       const width = window.innerWidth;
       const height = window.innerHeight;
-      const metrics = mapAudioToScene(audioData, moodContext, reducedMotion);
+      const environment = getEnvironment(moodContext.phase);
+      const metrics = applyEnvironment(mapAudioToScene(audioData, moodContext, reducedMotion), environment);
       const state = stateRef.current;
       if (playing || !reducedMotion) state.z += delta * metrics.roadSpeed * visualSpeed;
       state.nextLightning -= delta;
@@ -35,14 +36,14 @@ export default function DrivingScene({ audioData, moodContext, song, playing, vi
       state.lightning = Math.max(0, state.lightning - delta * 0.085);
       const road = makeRoadModel(width, height, state.z, metrics, audioData, visualSpeed);
       state.steering += (road.steeringTarget - state.steering) * Math.min(1, delta * 0.045);
-      drawSky(context, width, height, moodContext, audioData, metrics, state);
-      drawCity(context, width, height, state.z, metrics, moodContext, road);
-      drawStreetLights(context, width, height, state.z, metrics, road);
-      drawRoadsideDetails(context, width, height, state.z, metrics, road);
-      drawRoad(context, width, height, state.z, metrics, road);
+      drawSky(context, width, height, moodContext, audioData, metrics, state, environment);
+      drawCity(context, width, height, state.z, metrics, moodContext, road, environment);
+      drawStreetLights(context, width, height, state.z, metrics, road, environment);
+      drawRoadsideDetails(context, width, height, state.z, metrics, road, environment);
+      drawRoad(context, width, height, state.z, metrics, road, environment);
       drawRain(context, width, height, state, delta, metrics);
       drawSpeedStreaks(context, width, height, state.z, metrics, road);
-      drawOverlays(context, width, height, metrics, moodContext);
+      drawOverlays(context, width, height, metrics, moodContext, environment);
       drawCockpit(context, width, height, metrics, song, state.steering, road, state, delta);
       frame = requestAnimationFrame(draw);
     };
@@ -57,6 +58,87 @@ export default function DrivingScene({ audioData, moodContext, song, playing, vi
   }, [audioData, moodContext, playing, song, visualSpeed]);
 
   return <canvas className="driving-scene" ref={canvasRef} aria-label="Reactive night highway driving scene" />;
+}
+
+function getEnvironment(phase) {
+  const environments = {
+    morning: {
+      sky: ["#385263", "#d09672", "#1f3035"],
+      road: ["#263230", "#171e1d", "#080b0b"],
+      shoulder: 0.22,
+      cityAlpha: 0.54,
+      windowAlpha: 0.36,
+      lampAlpha: 0.28,
+      headlightAlpha: 0.55,
+      rainFactor: 0.24,
+      haze: "rgba(196, 215, 208,",
+      vignette: 0.32,
+      stars: 0.04
+    },
+    afternoon: {
+      sky: ["#526c78", "#9eb2b5", "#233334"],
+      road: ["#2b3330", "#1b211f", "#0c0f0e"],
+      shoulder: 0.18,
+      cityAlpha: 0.48,
+      windowAlpha: 0.18,
+      lampAlpha: 0.12,
+      headlightAlpha: 0.4,
+      rainFactor: 0.18,
+      haze: "rgba(205, 218, 208,",
+      vignette: 0.26,
+      stars: 0
+    },
+    evening: {
+      sky: ["#18243a", "#684c54", "#181d25"],
+      road: ["#202727", "#131817", "#060707"],
+      shoulder: 0.28,
+      cityAlpha: 0.72,
+      windowAlpha: 0.58,
+      lampAlpha: 0.78,
+      headlightAlpha: 0.78,
+      rainFactor: 0.52,
+      haze: "rgba(183, 165, 150,",
+      vignette: 0.48,
+      stars: 0.12
+    },
+    night: {
+      sky: ["#050a13", "#101723", "#050708"],
+      road: ["#171b1a", "#101312", "#050606"],
+      shoulder: 0.34,
+      cityAlpha: 0.82,
+      windowAlpha: 0.76,
+      lampAlpha: 1,
+      headlightAlpha: 1,
+      rainFactor: 0.72,
+      haze: "rgba(134, 153, 151,",
+      vignette: 0.6,
+      stars: 0.2
+    },
+    "late-night": {
+      sky: ["#010207", "#050912", "#030405"],
+      road: ["#121514", "#0b0d0d", "#030404"],
+      shoulder: 0.42,
+      cityAlpha: 0.64,
+      windowAlpha: 0.44,
+      lampAlpha: 0.86,
+      headlightAlpha: 1.08,
+      rainFactor: 1,
+      haze: "rgba(126, 145, 150,",
+      vignette: 0.72,
+      stars: 0.26
+    }
+  };
+  return environments[phase] || environments.night;
+}
+
+function applyEnvironment(metrics, environment) {
+  return {
+    ...metrics,
+    rain: Math.max(0.02, metrics.rain * environment.rainFactor),
+    glow: metrics.glow * environment.lampAlpha,
+    buildingActivity: metrics.buildingActivity * environment.windowAlpha,
+    reflections: metrics.reflections * environment.headlightAlpha
+  };
 }
 
 function makeRoadModel(width, height, z, metrics, audio, visualSpeed) {
@@ -89,26 +171,18 @@ function makeRoadModel(width, height, z, metrics, audio, visualSpeed) {
   };
 }
 
-function drawSky(ctx, width, height, mood, audio, metrics, state) {
+function drawSky(ctx, width, height, mood, audio, metrics, state, environment) {
   const gradient = ctx.createLinearGradient(0, 0, 0, height);
-  if (mood.phase === "morning") {
-    gradient.addColorStop(0, "#263847");
-    gradient.addColorStop(0.45, "#9a6f64");
-  } else if (mood.phase === "evening") {
-    gradient.addColorStop(0, "#0b1020");
-    gradient.addColorStop(0.55, "#3f2f42");
-  } else {
-    gradient.addColorStop(0, mood.phase === "late-night" ? "#010207" : "#030712");
-    gradient.addColorStop(0.68, "#0a1018");
-  }
-  gradient.addColorStop(1, "#050708");
+  gradient.addColorStop(0, environment.sky[0]);
+  gradient.addColorStop(0.58, environment.sky[1]);
+  gradient.addColorStop(1, environment.sky[2]);
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, width, height);
 
   drawCloudDeck(ctx, width, height, state.z, metrics, state.lightning);
   drawLightning(ctx, width, height, state.lightning);
 
-  ctx.globalAlpha = 0.2 + audio.treble * 0.2;
+  ctx.globalAlpha = environment.stars + audio.treble * environment.stars;
   for (let i = 0; i < 55; i += 1) {
     const x = (i * 173) % width;
     const y = 22 + ((i * 61) % Math.max(140, height * 0.4));
@@ -159,9 +233,9 @@ function drawLightning(ctx, width, height, amount) {
   ctx.stroke();
 }
 
-function drawCity(ctx, width, height, z, metrics, mood, road) {
+function drawCity(ctx, width, height, z, metrics, mood, road, environment) {
   const horizon = road.horizon;
-  drawDistantSkyline(ctx, width, height, z, metrics, mood, road);
+  drawDistantSkyline(ctx, width, height, z, metrics, mood, road, environment);
   for (let side = -1; side <= 1; side += 2) {
     for (let i = 0; i < 4; i += 1) {
       const t = ((i * 0.22 + z * 0.005 * road.visualSpeed) % 1 + 1) % 1;
@@ -175,9 +249,9 @@ function drawCity(ctx, width, height, z, metrics, mood, road) {
       const groundY = road.yAt(t) + 22 * scale;
       const y = groundY - buildingHeight;
       if (x < -buildingWidth * 1.8 || x > width + buildingWidth * 1.8) continue;
-      ctx.fillStyle = mood.phase === "late-night" ? "rgba(4, 6, 9, 0.28)" : "rgba(8, 11, 18, 0.34)";
+      ctx.fillStyle = `rgba(8, 11, 18, ${0.24 + environment.cityAlpha * 0.18})`;
       ctx.fillRect(x - buildingWidth / 2, y, buildingWidth, buildingHeight);
-      ctx.fillStyle = `rgba(218, 174, 98, ${0.04 + metrics.buildingActivity * 0.14})`;
+      ctx.fillStyle = `rgba(218, 174, 98, ${0.02 + metrics.buildingActivity * 0.14})`;
       const cols = Math.max(2, Math.floor(buildingWidth / 16));
       const rows = Math.max(3, Math.floor(buildingHeight / 18));
       for (let w = 0; w < cols; w += 1) {
@@ -190,14 +264,14 @@ function drawCity(ctx, width, height, z, metrics, mood, road) {
   }
 }
 
-function drawDistantSkyline(ctx, width, height, z, metrics, mood, road) {
+function drawDistantSkyline(ctx, width, height, z, metrics, mood, road, environment) {
   const horizon = road.horizon;
   for (let i = 0; i < 10; i += 1) {
     const x = ((i * width * 0.09 - z * 0.28) % (width * 1.2) + width * 1.2) % (width * 1.2) - width * 0.1;
     const w = 24 + (i % 5) * 10;
     const h = 58 + (i % 6) * 18;
     const y = horizon - h + 8;
-    ctx.fillStyle = mood.phase === "late-night" ? "rgba(3, 5, 8, 0.34)" : "rgba(8, 12, 20, 0.38)";
+    ctx.fillStyle = `rgba(5, 9, 15, ${0.18 + environment.cityAlpha * 0.24})`;
     ctx.fillRect(x, y, w, h);
     ctx.fillStyle = `rgba(211, 170, 94, ${0.035 + metrics.buildingActivity * 0.08})`;
     for (let row = 0; row < 6; row += 1) {
@@ -208,7 +282,8 @@ function drawDistantSkyline(ctx, width, height, z, metrics, mood, road) {
   }
 }
 
-function drawStreetLights(ctx, width, height, z, metrics, road) {
+function drawStreetLights(ctx, width, height, z, metrics, road, environment) {
+  if (environment.lampAlpha < 0.18) return;
   for (let side = -1; side <= 1; side += 2) {
     for (let i = 0; i < 5; i += 1) {
       const depth = ((i * 230 - z * 28) % 980 + 980) % 980;
@@ -226,8 +301,8 @@ function drawStreetLights(ctx, width, height, z, metrics, road) {
       ctx.lineTo(x - side * 24 * scale, y - pole - 8 * scale);
       ctx.stroke();
       const glow = ctx.createRadialGradient(x - side * 24 * scale, y - pole - 8 * scale, 1, x - side * 24 * scale, y - pole - 8 * scale, 54 * scale);
-      glow.addColorStop(0, `rgba(255, 220, 150, ${0.13 + metrics.glow * 0.07})`);
-      glow.addColorStop(0.42, `rgba(218, 160, 82, ${0.04 + metrics.glow * 0.035})`);
+      glow.addColorStop(0, `rgba(255, 220, 150, ${(0.13 + metrics.glow * 0.07) * environment.lampAlpha})`);
+      glow.addColorStop(0.42, `rgba(218, 160, 82, ${(0.04 + metrics.glow * 0.035) * environment.lampAlpha})`);
       glow.addColorStop(1, "rgba(255, 170, 70, 0)");
       ctx.fillStyle = glow;
       ctx.fillRect(x - 76 * scale, y - pole - 82 * scale, 152 * scale, 140 * scale);
@@ -235,7 +310,7 @@ function drawStreetLights(ctx, width, height, z, metrics, road) {
   }
 }
 
-function drawRoadsideDetails(ctx, width, height, z, metrics, road) {
+function drawRoadsideDetails(ctx, width, height, z, metrics, road, environment) {
   for (let side = -1; side <= 1; side += 2) {
     for (let i = 0; i < 8; i += 1) {
       const t = ((i * 0.16 + z * 0.02 * road.visualSpeed) % 1 + 1) % 1;
@@ -250,7 +325,7 @@ function drawRoadsideDetails(ctx, width, height, z, metrics, road) {
       ctx.moveTo(x, y);
       ctx.lineTo(x + side * 2, y - postHeight);
       ctx.stroke();
-      ctx.fillStyle = `rgba(230, 173, 92, ${0.04 + t * 0.18 + metrics.glow * 0.03})`;
+      ctx.fillStyle = `rgba(230, 173, 92, ${(0.04 + t * 0.18 + metrics.glow * 0.03) * environment.lampAlpha})`;
       ctx.fillRect(x - 2, y - postHeight, 4 + t * 6, 2 + t * 5);
       if (t > 0.58) {
         ctx.strokeStyle = `rgba(135, 150, 146, ${0.07 + t * 0.18})`;
@@ -281,7 +356,7 @@ function drawRoadsideDetails(ctx, width, height, z, metrics, road) {
   }
 }
 
-function drawRoad(ctx, width, height, z, metrics, road) {
+function drawRoad(ctx, width, height, z, metrics, road, environment) {
   const left = [];
   const right = [];
   const shoulderLeft = [];
@@ -308,7 +383,7 @@ function drawRoad(ctx, width, height, z, metrics, road) {
 
   const shoulderGradient = ctx.createLinearGradient(0, road.horizon, 0, road.dash);
   shoulderGradient.addColorStop(0, "rgba(30, 52, 65, 0.05)");
-  shoulderGradient.addColorStop(1, `rgba(48, 142, 160, ${0.18 + metrics.glow * 0.16})`);
+  shoulderGradient.addColorStop(1, `rgba(48, 142, 160, ${environment.shoulder + metrics.glow * 0.08})`);
   ctx.fillStyle = shoulderGradient;
   ctx.beginPath();
   shoulderLeft.forEach(([x, y], index) => index ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
@@ -322,9 +397,9 @@ function drawRoad(ctx, width, height, z, metrics, road) {
   ctx.fill();
 
   const asphalt = ctx.createLinearGradient(0, road.horizon, 0, road.dash);
-  asphalt.addColorStop(0, "#161a19");
-  asphalt.addColorStop(0.48, "#101312");
-  asphalt.addColorStop(1, "#050606");
+  asphalt.addColorStop(0, environment.road[0]);
+  asphalt.addColorStop(0.48, environment.road[1]);
+  asphalt.addColorStop(1, environment.road[2]);
   ctx.fillStyle = asphalt;
   ctx.beginPath();
   left.forEach(([x, y], index) => index ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
@@ -356,8 +431,8 @@ function drawRoad(ctx, width, height, z, metrics, road) {
   }
 
   const headlight = ctx.createRadialGradient(width / 2, road.dash * 0.94, width * 0.05, width / 2, road.dash * 0.88, width * 0.56);
-  headlight.addColorStop(0, `rgba(235, 226, 186, ${0.11 + metrics.glow * 0.05})`);
-  headlight.addColorStop(0.52, `rgba(111, 136, 132, ${0.06 + metrics.glow * 0.04})`);
+  headlight.addColorStop(0, `rgba(235, 226, 186, ${(0.11 + metrics.glow * 0.05) * environment.headlightAlpha})`);
+  headlight.addColorStop(0.52, `rgba(111, 136, 132, ${(0.06 + metrics.glow * 0.04) * environment.headlightAlpha})`);
   headlight.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = headlight;
   ctx.fillRect(0, road.horizon, width, road.dash - road.horizon);
@@ -757,10 +832,10 @@ function roundRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
-function drawOverlays(ctx, width, height, metrics, mood) {
+function drawOverlays(ctx, width, height, metrics, mood, environment) {
   const haze = ctx.createLinearGradient(0, height * 0.28, 0, height);
   haze.addColorStop(0, "rgba(190, 205, 210, 0)");
-  haze.addColorStop(0.48, `rgba(134, 153, 151, ${0.035 + metrics.rain * 0.035})`);
+  haze.addColorStop(0.48, `${environment.haze} ${0.035 + metrics.rain * 0.035})`);
   haze.addColorStop(1, "rgba(0, 0, 0, 0.16)");
   ctx.fillStyle = haze;
   ctx.fillRect(0, 0, width, height);
@@ -773,7 +848,7 @@ function drawOverlays(ctx, width, height, metrics, mood) {
   }
   const vignette = ctx.createRadialGradient(width / 2, height / 2, width * 0.2, width / 2, height / 2, width * 0.72);
   vignette.addColorStop(0, "rgba(0,0,0,0)");
-  vignette.addColorStop(1, mood.phase === "late-night" ? "rgba(0,0,0,0.72)" : "rgba(0,0,0,0.45)");
+  vignette.addColorStop(1, `rgba(0,0,0,${environment.vignette})`);
   ctx.fillStyle = vignette;
   ctx.fillRect(0, 0, width, height);
 }
