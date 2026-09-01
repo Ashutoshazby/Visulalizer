@@ -47,6 +47,22 @@ const LANGUAGE_HINTS = {
   haryanvi: "haryanvi"
 };
 
+const ALWAYS_BLOCKED_TRACKS = [
+  /\b(hanuman|chalisa|bhajan|aarti|mantra|bhakti|devotional|shiv|shiva|mahadev|krishna|radha|ram|rama|ganesh|ganpati|durga|mata|sai baba)\b/i
+];
+
+const MOOD_BLOCKED_TRACKS = {
+  romantic: [
+    /\b(sad|dard|bewafa|judai|judaai|tanha|tanhai|alone|breakup|heartbreak|rona|royi|yaad|yaadein|separation)\b/i
+  ],
+  chill: [
+    /\b(chalisa|aarti|mantra|bhajan)\b/i
+  ],
+  "late-night": [
+    /\b(chalisa|aarti|mantra|bhajan)\b/i
+  ]
+};
+
 export function createJioSaavnProvider(config) {
   return new JioSaavnProvider(config);
 }
@@ -115,7 +131,9 @@ class JioSaavnProvider extends MusicProvider {
       });
       pool.push(...songs);
     }
-    return shuffle(uniqueSongs(pool)).slice(0, limit);
+    const cleanPool = uniqueSongs(pool).filter((song) => isRecommendationSafe(song));
+    const moodPool = cleanPool.filter((song) => isMoodSafe(song, mood));
+    return shuffle(moodPool.length ? moodPool : cleanPool).slice(0, limit);
   }
 
   withLanguage(query, language) {
@@ -218,6 +236,23 @@ function decryptMediaUrl(encryptedMediaUrl, hasHighQuality) {
 
 function isPreviewStream(url) {
   return /preview\.saavncdn\.com/i.test(String(url || ""));
+}
+
+function isRecommendationSafe(song) {
+  const text = searchableSongText(song);
+  return !ALWAYS_BLOCKED_TRACKS.some((pattern) => pattern.test(text));
+}
+
+function isMoodSafe(song, mood) {
+  const text = searchableSongText(song);
+  const blocked = MOOD_BLOCKED_TRACKS[mood] || [];
+  if (blocked.some((pattern) => pattern.test(text))) return false;
+  if (mood === "romantic" && song.moods?.includes("sad")) return false;
+  return true;
+}
+
+function searchableSongText(song) {
+  return `${song?.title || ""} ${song?.artist || ""} ${song?.album || ""}`.toLowerCase();
 }
 
 function inferMoods(text) {
