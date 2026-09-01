@@ -48,7 +48,7 @@ const LANGUAGE_HINTS = {
 };
 
 const ALWAYS_BLOCKED_TRACKS = [
-  /\b(hanuman|chalisa|bhajan|aarti|mantra|bhakti|devotional|shiv|shiva|mahadev|krishna|radha|ram|rama|ganesh|ganpati|durga|mata|sai baba)\b/i
+  /\b(hanuman|hanumanji|chalisa|bhajan|aarti|mantra|bhakti|devotional|shiv|shiva|mahadev|mahakal|mahakaal|bhole|bholenath|krishna|radha|ram|rama|ganesh|ganpati|durga|mata|sai baba)\b/i
 ];
 
 const MOOD_BLOCKED_TRACKS = {
@@ -62,6 +62,10 @@ const MOOD_BLOCKED_TRACKS = {
     /\b(chalisa|aarti|mantra|bhajan)\b/i
   ]
 };
+
+const NOSTALGIC_TRACKS = [
+  /\b(90s|90's|nineties|retro|old hindi|old punjabi|old songs|old is gold|kumar sanu|udit narayan|alka yagnik)\b/i
+];
 
 export function createJioSaavnProvider(config) {
   return new JioSaavnProvider(config);
@@ -248,11 +252,18 @@ function isMoodSafe(song, mood) {
   const blocked = MOOD_BLOCKED_TRACKS[mood] || [];
   if (blocked.some((pattern) => pattern.test(text))) return false;
   if (mood === "romantic" && song.moods?.includes("sad")) return false;
+  if (mood !== "nostalgic" && isNostalgicTrack(song, text)) return false;
   return true;
 }
 
 function searchableSongText(song) {
   return `${song?.title || ""} ${song?.artist || ""} ${song?.album || ""}`.toLowerCase();
+}
+
+function isNostalgicTrack(song, text = searchableSongText(song)) {
+  const year = Number(song?.year);
+  if (year >= 1980 && year <= 1999) return true;
+  return NOSTALGIC_TRACKS.some((pattern) => pattern.test(text));
 }
 
 function inferMoods(text) {
