@@ -1,4 +1,5 @@
 import { timeRules } from "./TimeRules.js";
+import { getKolkataClock } from "./KolkataTime.js";
 
 const moodMap = {
   auto: null,
@@ -13,15 +14,15 @@ const moodMap = {
 
 const messages = {
   morning: ["The city is still stretching awake.", "A softer road for a softer hour."],
-  day: ["Clear lanes, easy rhythm.", "Let the daylight carry the beat."],
+  afternoon: ["Dopahar drive, clean rhythm.", "Daylight on the road, easy pace."],
   evening: ["Let's take the long way home.", "The lights are starting to remember us."],
   night: ["Tonight feels different.", "Windows down in another universe."],
   "late-night": ["Some roads are better at night.", "No rush. Just the line ahead."]
 };
 
 export function getCurrentMood(date, preferences, moodOverride = "auto", languageOverride = "auto") {
-  const hour = date.getHours() + date.getMinutes() / 60;
-  const rule = timeRules.find((item) => hour >= item.start && hour < item.end) || timeRules[0];
+  const clock = getKolkataClock(date);
+  const rule = timeRules.find((item) => clock.timeValue >= item.start && clock.timeValue < item.end) || timeRules[0];
   const override = moodMap[moodOverride];
   const preferredLanguage = pickLanguage(preferences, languageOverride);
   return {
@@ -36,12 +37,12 @@ export function getCurrentMood(date, preferences, moodOverride = "auto", languag
 }
 
 export function getTimeMessage(date) {
+  const clock = getKolkataClock(date);
   const phase = (timeRules.find((item) => {
-    const hour = date.getHours() + date.getMinutes() / 60;
-    return hour >= item.start && hour < item.end;
+    return clock.timeValue >= item.start && clock.timeValue < item.end;
   }) || timeRules[0]).phase;
   const options = messages[phase] || messages.night;
-  const key = Math.floor((date.getDate() + date.getHours()) % options.length);
+  const key = Math.floor((clock.day + clock.hour) % options.length);
   return options[key];
 }
 

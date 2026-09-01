@@ -34,12 +34,13 @@ export default function App() {
   const [controlsVisible, setControlsVisible] = useState(true);
   const [visualSpeed, setVisualSpeed] = useState(1);
   const [fullscreen, setFullscreen] = useState(false);
+  const [clockTick, setClockTick] = useState(() => Date.now());
 
   const moodContext = useMemo(() => {
-    return getCurrentMood(new Date(), preferences, moodOverride, languageOverride);
-  }, [preferences, moodOverride, languageOverride]);
+    return getCurrentMood(new Date(clockTick), preferences, moodOverride, languageOverride);
+  }, [clockTick, preferences, moodOverride, languageOverride]);
 
-  const timeMessage = useMemo(() => getTimeMessage(new Date()), [started, song?.id]);
+  const timeMessage = useMemo(() => getTimeMessage(new Date(clockTick)), [clockTick, started, song?.id]);
 
   const refreshPreferences = useCallback((next) => {
     setPreferences(next);
@@ -231,6 +232,11 @@ export default function App() {
     if (!started) return;
     loadDriveQueue();
   }, [moodOverride, languageOverride]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockTick(Date.now()), 60000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const onFullscreenChange = () => setFullscreen(Boolean(document.fullscreenElement));
