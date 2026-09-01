@@ -1,6 +1,7 @@
 const languages = [
   ["auto", "Auto"],
   ["hindi", "Hindi"],
+  ["english", "English"],
   ["punjabi", "Punjabi"],
   ["haryanvi", "Haryanvi"],
   ["surprise", "Surprise Me"]

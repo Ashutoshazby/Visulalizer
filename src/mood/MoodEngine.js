@@ -28,7 +28,7 @@ export function getCurrentMood(date, preferences, moodOverride = "auto", languag
     mood: override ? moodOverride : rule.mood,
     intensity: override ? Math.max(rule.intensity, 0.66) : rule.intensity,
     language: preferredLanguage,
-    preferredLanguages: preferredLanguage === "auto" ? ["hindi", "punjabi", "haryanvi"] : [preferredLanguage],
+    preferredLanguages: preferredLanguage === "auto" ? ["hindi", "english", "punjabi", "haryanvi"] : [preferredLanguage],
     phase: rule.phase,
     tags: override ? [...new Set([...override.tags, ...rule.tags])] : rule.tags,
     speed: override?.speed || rule.speed
@@ -46,7 +46,7 @@ export function getTimeMessage(date) {
 }
 
 function pickLanguage(preferences, override) {
-  if (override === "surprise") return ["hindi", "punjabi", "haryanvi"][Math.floor(Math.random() * 3)];
+  if (override === "surprise") return ["hindi", "english", "punjabi", "haryanvi"][Math.floor(Math.random() * 4)];
   if (override !== "auto") return override;
   const entries = Object.entries(preferences.languagePreferences || {});
   return entries.sort((a, b) => b[1] - a[1])[0]?.[0] || "hindi";

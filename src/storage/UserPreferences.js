@@ -1,7 +1,7 @@
 const KEY = "night-drive-radio-preferences";
 
 const defaults = {
-  languagePreferences: { hindi: 0.62, punjabi: 0.26, haryanvi: 0.12 },
+  languagePreferences: { hindi: 0.56, english: 0.16, punjabi: 0.2, haryanvi: 0.08 },
   moodPreferences: { romantic: 0.28, sad: 0.18, chill: 0.22, "late-night": 0.32 },
   recentlyPlayed: [],
   skippedSongs: [],

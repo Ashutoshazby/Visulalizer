@@ -19,6 +19,11 @@ const DISCOVERY_QUERIES = {
     "bollywood lofi", "hindi indie", "hindi songs 2024", "hindi songs 2023", "bollywood romantic",
     "bollywood sad", "hindi unplugged", "armaan malik", "sachet parampara", "amit trivedi"
   ],
+  english: [
+    "english chill drive", "english late night drive", "english romantic songs", "english sad songs",
+    "english acoustic", "english pop hits", "weeknd", "ed sheeran", "taylor swift", "dua lipa",
+    "coldplay", "lana del rey", "post malone", "one direction", "english road trip songs"
+  ],
   punjabi: [
     "punjabi romantic", "punjabi chill", "punjabi sad", "punjabi drive", "ap dhillon",
     "diljit dosanjh", "satinder sartaaj", "amrinder gill", "b praak", "harrdy sandhu",
@@ -29,13 +34,15 @@ const DISCOVERY_QUERIES = {
     "renuka panwar", "masoom sharma", "raj mawar", "vishvajeet choudhary"
   ],
   auto: [
-    "arijit singh", "kk songs", "jubin nautiyal", "vishal mishra", "punjabi romantic",
-    "haryanvi songs", "bollywood lofi", "hindi indie", "bollywood acoustic", "punjabi chill"
+    "arijit singh", "kk songs", "jubin nautiyal", "vishal mishra", "english chill drive",
+    "english pop hits", "punjabi romantic", "haryanvi songs", "bollywood lofi", "hindi indie",
+    "bollywood acoustic", "punjabi chill"
   ]
 };
 
 const LANGUAGE_HINTS = {
   hindi: "hindi",
+  english: "english",
   punjabi: "punjabi",
   haryanvi: "haryanvi"
 };
