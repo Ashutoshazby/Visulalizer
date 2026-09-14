@@ -1,8 +1,11 @@
 export function selectSong(songs, context, preferences) {
   const uniqueSongs = dedupeSongs(songs);
-  const recentIds = new Set((preferences.recentlyPlayed || []).slice(0, 80));
+  const recentIds = new Set((preferences.recentlyPlayed || []).slice(0, 110));
   const freshSongs = uniqueSongs.filter((song) => !recentIds.has(song.id));
-  const pool = freshSongs.length >= Math.min(10, uniqueSongs.length) ? freshSongs : leastRepeatedSongs(uniqueSongs, preferences);
+  const moodPool = freshSongs.filter((song) => isMoodAligned(song, context));
+  const pool = moodPool.length >= Math.min(8, freshSongs.length)
+    ? moodPool
+    : freshSongs.length >= Math.min(12, uniqueSongs.length) ? freshSongs : leastRepeatedSongs(uniqueSongs, preferences);
 
   return weightedShuffle(
     pool.map((song) => ({ song, score: scoreSong(song, context, preferences) }))
@@ -30,15 +33,32 @@ function canonical(value) {
 }
 
 function scoreSong(song, context, preferences) {
-  const moodMatch = song.moods?.includes(context.mood) ? 1 : context.tags.some((tag) => song.moods?.includes(tag)) ? 0.72 : 0.45;
+  const moodMatch = song.moods?.includes(context.mood) ? 1 : context.tags.some((tag) => song.moods?.includes(tag)) ? 0.52 : 0.16;
   const languageMatch = context.language === "surprise" || context.language === "auto"
     ? preferences.languagePreferences?.[song.language] || 0.5
     : song.language === context.language ? 1 : 0.15;
   const timeMatch = context.phase === "late-night" ? song.nightDrive || 0.85 : 0.62;
   const recentIndex = (preferences.recentlyPlayed || []).indexOf(song.id);
-  const recentPenalty = recentIndex === -1 ? 1 : Math.max(0.08, recentIndex / 30);
-  const playCountPenalty = 1 / Math.sqrt((preferences.playCounts?.[song.id] || 0) + 1);
-  return (moodMatch * 0.38 + languageMatch * 0.22 + timeMatch * 0.16 + recentPenalty * 0.14 + playCountPenalty * 0.1);
+  const recentPenalty = recentIndex === -1 ? 1 : Math.max(0.04, recentIndex / 70);
+  const playCountPenalty = 1 / ((preferences.playCounts?.[song.id] || 0) + 1);
+  const energyMatch = energyScore(song, context.mood);
+  const randomness = 0.78 + Math.random() * 0.44;
+  return (moodMatch * 0.42 + languageMatch * 0.18 + energyMatch * 0.16 + timeMatch * 0.08 + recentPenalty * 0.1 + playCountPenalty * 0.06) * randomness;
+}
+
+function isMoodAligned(song, context) {
+  if (context.mood === "energetic") return song.energy >= 0.58 && song.moods?.includes("energetic");
+  if (context.mood === "sad") return !song.moods?.includes("energetic") && song.energy <= 0.62;
+  if (context.mood === "romantic") return !song.moods?.includes("sad") && !song.moods?.includes("energetic") && song.energy <= 0.68;
+  return true;
+}
+
+function energyScore(song, mood) {
+  if (mood === "energetic") return song.energy >= 0.68 ? 1 : song.energy >= 0.58 ? 0.72 : 0.08;
+  if (mood === "sad") return song.energy <= 0.48 ? 1 : song.energy <= 0.62 ? 0.56 : 0.12;
+  if (mood === "romantic") return song.energy >= 0.35 && song.energy <= 0.68 ? 1 : 0.28;
+  if (mood === "chill" || mood === "late-night") return song.energy <= 0.7 ? 0.88 : 0.3;
+  return 0.62;
 }
 
 function leastRepeatedSongs(songs, preferences) {
@@ -55,7 +75,7 @@ function leastRepeatedSongs(songs, preferences) {
 }
 
 function weightedShuffle(entries) {
-  const queue = [...entries];
+  const queue = [...entries].sort(() => Math.random() - 0.5);
   const shuffled = [];
 
   while (queue.length) {

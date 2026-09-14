@@ -3,7 +3,16 @@ import { mapAudioToScene } from "../audio/VisualAudioMapper.js";
 
 export default function DrivingScene({ audioData, moodContext, song, playing, visualSpeed = 1 }) {
   const canvasRef = useRef(null);
-  const stateRef = useRef({ z: 0, particles: [], glassDrops: [], steering: 0, lightning: 0, nextLightning: 120 });
+  const stateRef = useRef({
+    z: 0,
+    particles: [],
+    glassDrops: [],
+    steering: 0,
+    driverLane: 0,
+    lightning: 0,
+    nextLightning: 120,
+    controls: { left: false, right: false, up: false, down: false }
+  });
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -27,15 +36,20 @@ export default function DrivingScene({ audioData, moodContext, song, playing, vi
       const environment = getEnvironment(moodContext.phase);
       const metrics = applyEnvironment(mapAudioToScene(audioData, moodContext, reducedMotion), environment);
       const state = stateRef.current;
-      if (playing || !reducedMotion) state.z += delta * metrics.roadSpeed * visualSpeed;
+      const inputSteer = Number(state.controls.right) - Number(state.controls.left);
+      const inputThrottle = Number(state.controls.up) - Number(state.controls.down);
+      const driveBoost = 1 + inputThrottle * 0.38;
+      state.driverLane = clamp(state.driverLane + inputSteer * delta * 0.022, -0.82, 0.82);
+      state.driverLane *= 1 - Math.min(0.08, delta * 0.018);
+      if (playing || !reducedMotion) state.z += delta * metrics.roadSpeed * visualSpeed * Math.max(0.45, driveBoost);
       state.nextLightning -= delta;
       if (metrics.rain > 0.45 && state.nextLightning < 0) {
         state.lightning = 1;
         state.nextLightning = 220 + Math.random() * 520;
       }
       state.lightning = Math.max(0, state.lightning - delta * 0.085);
-      const road = makeRoadModel(width, height, state.z, metrics, audioData, visualSpeed);
-      state.steering += (road.steeringTarget - state.steering) * Math.min(1, delta * 0.045);
+      const road = makeRoadModel(width, height, state.z, metrics, audioData, visualSpeed, state.driverLane);
+      state.steering += (road.steeringTarget + inputSteer * 0.55 - state.steering) * Math.min(1, delta * 0.08);
       drawSky(context, width, height, moodContext, audioData, metrics, state, environment);
       drawCity(context, width, height, state.z, metrics, moodContext, road, environment);
       drawStreetLights(context, width, height, state.z, metrics, road, environment);
@@ -48,12 +62,29 @@ export default function DrivingScene({ audioData, moodContext, song, playing, vi
       frame = requestAnimationFrame(draw);
     };
 
+    const updateControls = (event, active) => {
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) return;
+      const controls = stateRef.current.controls;
+      if (event.key === "ArrowLeft" || event.key.toLowerCase() === "a") controls.left = active;
+      else if (event.key === "ArrowRight" || event.key.toLowerCase() === "d") controls.right = active;
+      else if (event.key === "ArrowUp" || event.key.toLowerCase() === "w") controls.up = active;
+      else if (event.key === "ArrowDown" || event.key.toLowerCase() === "s") controls.down = active;
+      else return;
+      event.preventDefault();
+    };
+    const onKeyDown = (event) => updateControls(event, true);
+    const onKeyUp = (event) => updateControls(event, false);
+
     resize();
     window.addEventListener("resize", resize);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
     frame = requestAnimationFrame(draw);
     return () => {
       cancelAnimationFrame(frame);
       window.removeEventListener("resize", resize);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
     };
   }, [audioData, moodContext, playing, song, visualSpeed]);
 
@@ -141,7 +172,7 @@ function applyEnvironment(metrics, environment) {
   };
 }
 
-function makeRoadModel(width, height, z, metrics, audio, visualSpeed) {
+function makeRoadModel(width, height, z, metrics, audio, visualSpeed, driverLane = 0) {
   const horizon = height * 0.39;
   const dash = height * 0.9;
   const curvePhase = z * 0.018;
@@ -157,7 +188,8 @@ function makeRoadModel(width, height, z, metrics, audio, visualSpeed) {
       const perspective = Math.pow(t, 1.48);
       const farCurve = Math.sin(curvePhase + t * 1.2) * 0.24;
       const nearCurve = Math.sin(curvePhase * 0.74 + t * 2.6) * 0.18;
-      return width / 2 + (mainCurve * perspective + farCurve * t + nearCurve * perspective) * width * 0.21 + bassLean * width;
+      const manualLaneShift = driverLane * width * 0.16 * Math.pow(t, 1.08);
+      return width / 2 + (mainCurve * perspective + farCurve * t + nearCurve * perspective) * width * 0.21 + bassLean * width - manualLaneShift;
     },
     yAt(t) {
       return horizon + Math.pow(t, 1.72) * (dash - horizon);
@@ -169,6 +201,10 @@ function makeRoadModel(width, height, z, metrics, audio, visualSpeed) {
       return width * (0.055 + Math.pow(t, 1.2) * 0.12 + metrics.glow * 0.015);
     }
   };
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function drawSky(ctx, width, height, mood, audio, metrics, state, environment) {

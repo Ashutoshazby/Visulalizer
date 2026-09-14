@@ -2,14 +2,24 @@ import CryptoJS from "crypto-js";
 import { MusicProvider } from "./MusicProvider.js";
 
 const MOOD_QUERIES = {
-  romantic: ["romantic hindi", "punjabi romantic", "love songs hindi", "arijit love", "atif aslam romantic", "bollywood love songs", "jubin nautiyal romantic", "vishal mishra love"],
-  sad: ["sad hindi songs", "punjabi sad songs", "emotional hindi", "arijit sad", "kk sad songs", "atif sad songs", "jubin sad", "vishal mishra sad"],
+  romantic: ["romantic hindi", "punjabi romantic", "love songs hindi", "arijit love", "atif aslam romantic", "bollywood love songs", "jubin nautiyal romantic", "vishal mishra love", "hindi romantic hits", "bollywood romantic hits", "romantic armaan malik", "romantic kk"],
+  sad: ["sad hindi songs", "punjabi sad songs", "emotional hindi", "arijit sad", "kk sad songs", "atif sad songs", "jubin sad", "vishal mishra sad", "hindi heartbreak songs", "bollywood sad hits", "emotional arijit", "sad kk"],
   "late-night": ["late night hindi", "lofi hindi", "arijit night", "kk unplugged", "bollywood chill night", "hindi acoustic", "mohit chauhan unplugged", "jubin nautiyal acoustic", "vishal mishra lofi", "atif aslam unplugged"],
   nostalgic: ["90s hindi songs", "old punjabi songs", "kumar sanu", "udit narayan", "alka yagnik", "sonu nigam old"],
   highway: ["drive songs hindi", "punjabi highway", "desi drive", "bollywood road trip", "hindi travel songs", "punjabi drive"],
   energetic: ["punjabi party", "haryanvi energetic", "bollywood dance", "hindi party songs", "punjabi beat", "haryanvi dance"],
   chill: ["hindi chill", "punjabi chill", "lofi bollywood", "hindi acoustic", "soft bollywood", "indie hindi", "prateek kuhad", "anuv jain"],
   auto: ["hindi hits", "punjabi hits", "haryanvi songs", "bollywood hits", "arijit singh", "kk songs"]
+};
+
+const MOOD_QUERY_MARKERS = {
+  romantic: /\b(romantic|love|arijit love|atif aslam romantic|jubin nautiyal romantic|vishal mishra love)\b/i,
+  sad: /\b(sad|emotional|arijit sad|kk sad|atif sad|jubin sad|vishal mishra sad)\b/i,
+  "late-night": /\b(late night|lofi|night|unplugged|acoustic)\b/i,
+  nostalgic: /\b(90s|old|kumar sanu|udit narayan|alka yagnik|sonu nigam old)\b/i,
+  highway: /\b(drive|highway|road trip|travel)\b/i,
+  energetic: /\b(party|dance|beat|energetic|workout|gym)\b/i,
+  chill: /\b(chill|lofi|acoustic|soft|indie|prateek kuhad|anuv jain)\b/i
 };
 
 const DISCOVERY_QUERIES = {
@@ -53,13 +63,22 @@ const ALWAYS_BLOCKED_TRACKS = [
 
 const MOOD_BLOCKED_TRACKS = {
   romantic: [
-    /\b(sad|dard|bewafa|judai|judaai|tanha|tanhai|alone|breakup|heartbreak|rona|royi|yaad|yaadein|separation)\b/i
+    /\b(sad|dard|bewafa|judai|judaai|tanha|tanhai|alone|breakup|heartbreak|rona|royi|yaad|yaadein|separation|party|dance|dj|bass boosted|remix)\b/i
+  ],
+  sad: [
+    /\b(party|dance|dj|club|banger|energetic|workout|gym|beat|bass boosted)\b/i
+  ],
+  energetic: [
+    /\b(sad|dard|bewafa|judai|judaai|tanha|tanhai|alone|breakup|heartbreak|rona|royi|yaad|yaadein|ghazal|unplugged|acoustic|lofi|lo-fi|slow|sleep|soft|romantic mashup)\b/i
   ],
   chill: [
-    /\b(chalisa|aarti|mantra|bhajan)\b/i
+    /\b(chalisa|aarti|mantra|bhajan|party|club|banger|bass boosted)\b/i
   ],
   "late-night": [
-    /\b(chalisa|aarti|mantra|bhajan)\b/i
+    /\b(chalisa|aarti|mantra|bhajan|party|club|banger|bass boosted)\b/i
+  ],
+  highway: [
+    /\b(chalisa|aarti|mantra|bhajan|ghazal|sleep)\b/i
   ]
 };
 
@@ -122,18 +141,22 @@ class JioSaavnProvider extends MusicProvider {
   async getRecommendations({ mood = "auto", language = "auto", limit = 18 }) {
     const pool = [];
     const discovery = DISCOVERY_QUERIES[language] || DISCOVERY_QUERIES.auto;
-    const queries = shuffle([...(MOOD_QUERIES[mood] || MOOD_QUERIES.auto), ...discovery, ...MOOD_QUERIES.auto]);
+    const baseQueries = mood === "auto"
+      ? [...MOOD_QUERIES.auto, ...discovery]
+      : [...(MOOD_QUERIES[mood] || discovery)];
+    const queries = shuffle(baseQueries);
     const pages = shuffle([0, 1, 2, 3, 4, 5]);
     const attempts = Math.min(16, queries.length);
 
     for (let i = 0; i < attempts && uniqueSongs(pool).length < limit * 1.25; i += 1) {
+      const query = queries[i];
       const songs = await this.searchSongs({
-        query: queries[i],
+        query,
         language,
         limit: Math.ceil(limit / 2),
         page: pages[i % pages.length]
       });
-      pool.push(...songs);
+      pool.push(...songs.map((song) => tagSongFromQuery(song, mood, query)));
     }
     const cleanPool = uniqueSongs(pool).filter((song) => isRecommendationSafe(song));
     const moodPool = cleanPool.filter((song) => isMoodSafe(song, mood));
@@ -252,8 +275,32 @@ function isMoodSafe(song, mood) {
   const blocked = MOOD_BLOCKED_TRACKS[mood] || [];
   if (blocked.some((pattern) => pattern.test(text))) return false;
   if (mood === "romantic" && song.moods?.includes("sad")) return false;
+  if (mood === "energetic" && (song.moods?.includes("sad") || song.moods?.includes("romantic") || !song.moods?.includes("energetic") || song.energy < 0.58)) return false;
+  if (mood === "sad" && (song.moods?.includes("energetic") || song.energy > 0.68)) return false;
+  if (mood === "romantic" && song.energy > 0.72) return false;
   if (mood !== "nostalgic" && isNostalgicTrack(song, text)) return false;
   return true;
+}
+
+function tagSongFromQuery(song, requestedMood, query) {
+  if (requestedMood === "auto") return song;
+  const marker = MOOD_QUERY_MARKERS[requestedMood];
+  if (!marker?.test(query)) return song;
+  const moods = new Set(song.moods || []);
+  moods.add(requestedMood);
+  return {
+    ...song,
+    moods: [...moods],
+    energy: adjustedEnergy(song.energy, requestedMood)
+  };
+}
+
+function adjustedEnergy(energy, mood) {
+  if (mood === "energetic") return Math.max(energy || 0, 0.78);
+  if (mood === "sad") return Math.min(energy || 0.5, 0.42);
+  if (mood === "romantic") return Math.min(Math.max(energy || 0.5, 0.42), 0.62);
+  if (mood === "chill" || mood === "late-night") return Math.min(energy || 0.5, 0.58);
+  return energy;
 }
 
 function searchableSongText(song) {
@@ -269,17 +316,18 @@ function isNostalgicTrack(song, text = searchableSongText(song)) {
 function inferMoods(text) {
   const source = text.toLowerCase();
   const moods = [];
-  if (/love|dil|romantic|pyaar|ishq/.test(source)) moods.push("romantic");
-  if (/sad|alone|judai|dard|yaad|bewafa/.test(source)) moods.push("sad");
-  if (/party|dance|beat|gabru|dj/.test(source)) moods.push("energetic");
+  if (/sad|alone|judai|judaai|dard|bewafa|breakup|heartbreak|tanha|tanhai|rona|royi/.test(source)) moods.push("sad");
+  if (/party|dance|club|banger|beat|gabru|dj|workout|gym|bass|energetic/.test(source)) moods.push("energetic");
+  if (/love|romantic|pyaar|ishq|soulmate|saathiya|labon|tera mera|jaan ban|sajde/.test(source) && !moods.includes("sad")) moods.push("romantic");
   if (/90|retro|old/.test(source)) moods.push("nostalgic");
   return moods.length ? moods : ["late-night"];
 }
 
 function inferEnergy(raw) {
   const text = `${raw.name || raw.title || ""} ${raw.album?.name || raw.album || ""}`.toLowerCase();
-  if (/party|dance|dj|beat|remix/.test(text)) return 0.86;
-  if (/lofi|sad|ghazal|unplugged/.test(text)) return 0.38;
+  if (/party|dance|dj|beat|remix|club|banger|bass|workout|gym/.test(text)) return 0.9;
+  if (/lofi|lo-fi|sad|ghazal|unplugged|acoustic|slow|sleep/.test(text)) return 0.32;
+  if (/romantic|love|pyaar|ishq|soulmate/.test(text)) return 0.48;
   return 0.62;
 }
 
@@ -314,5 +362,10 @@ function canonical(value) {
 }
 
 function shuffle(items) {
-  return [...items].sort(() => Math.random() - 0.5);
+  const shuffled = [...items];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+  return shuffled;
 }
