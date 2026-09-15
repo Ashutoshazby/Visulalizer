@@ -49,6 +49,8 @@ export default function DrivingScene({ audioData, moodContext, song, playing, vi
       metrics.manualBrake = Math.max(0, -inputThrottle);
       metrics.manualSteer = inputSteer;
       metrics.driveIntensity = Math.min(1, Math.abs(state.driverLane) + Math.abs(state.driverVelocity) * 9 + metrics.manualBoost * 0.5);
+      metrics.displaySpeed = Math.round(48 + metrics.roadSpeed * visualSpeed * 32 + metrics.manualBoost * 42 - metrics.manualBrake * 18 + Math.abs(state.driverVelocity) * 420);
+      metrics.rpm = clamp(0.18 + metrics.roadSpeed * 0.18 + metrics.manualBoost * 0.34 + Math.abs(state.driverVelocity) * 2.8 + audioData.beat * 0.18, 0, 1);
       if (playing || !reducedMotion) state.z += delta * metrics.roadSpeed * visualSpeed * Math.max(0.45, driveBoost);
       state.nextLightning -= delta;
       if (metrics.rain > 0.45 && state.nextLightning < 0) {
@@ -194,8 +196,8 @@ function applyCameraLean(ctx, width, height, state, metrics) {
 }
 
 function makeRoadModel(width, height, z, metrics, audio, visualSpeed, driverLane = 0) {
-  const horizon = height * 0.39;
-  const dash = height * 0.9;
+  const horizon = height * 0.35;
+  const dash = height * 0.94;
   const curvePhase = z * 0.018;
   const mainCurve = Math.sin(curvePhase) * 0.54 + Math.sin(curvePhase * 0.43 + 1.7) * 0.34;
   const nextCurve = Math.sin(curvePhase + 0.9) * 0.54 + Math.sin((curvePhase + 0.9) * 0.43 + 1.7) * 0.34;
@@ -216,10 +218,10 @@ function makeRoadModel(width, height, z, metrics, audio, visualSpeed, driverLane
       return horizon + Math.pow(t, 1.72) * (dash - horizon);
     },
     halfAt(t) {
-      return width * (0.026 + Math.pow(t, 1.38) * 0.48);
+      return width * (0.034 + Math.pow(t, 1.3) * 0.54);
     },
     shoulderAt(t) {
-      return width * (0.055 + Math.pow(t, 1.2) * 0.12 + metrics.glow * 0.015);
+      return width * (0.07 + Math.pow(t, 1.12) * 0.14 + metrics.glow * 0.016);
     }
   };
 }
@@ -476,6 +478,7 @@ function drawRoad(ctx, width, height, z, metrics, road, environment) {
 
   drawRoadEdge(ctx, left, `rgba(112, 165, 168, ${0.16 + metrics.glow * 0.12})`, 1.3);
   drawRoadEdge(ctx, right, `rgba(112, 165, 168, ${0.16 + metrics.glow * 0.12})`, 1.3);
+  drawGuardRails(ctx, left, right, metrics);
 
   for (let i = -2; i < 16; i += 1) {
     const base = ((i * 0.115 + z * 0.052) % 1.25 + 1.25) % 1.25;
@@ -543,6 +546,30 @@ function drawRoadEdge(ctx, points, color, lineWidth) {
   ctx.beginPath();
   points.forEach(([x, y], index) => index ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
   ctx.stroke();
+}
+
+function drawGuardRails(ctx, left, right, metrics) {
+  for (const [points, side] of [[left, -1], [right, 1]]) {
+    ctx.save();
+    ctx.strokeStyle = `rgba(156, 181, 176, ${0.05 + metrics.driveIntensity * 0.06})`;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    points.forEach(([x, y], index) => {
+      const railX = x + side * 18;
+      const railY = y - 12;
+      index ? ctx.lineTo(railX, railY) : ctx.moveTo(railX, railY);
+    });
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(235, 195, 120, ${0.04 + metrics.glow * 0.05})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    points.filter((_, index) => index % 6 === 0).forEach(([x, y], index) => {
+      const railX = x + side * 18;
+      index ? ctx.lineTo(railX, y - 15) : ctx.moveTo(railX, y - 15);
+    });
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 function drawWetAsphalt(ctx, width, height, z, metrics, road) {
@@ -667,7 +694,7 @@ function drawCockpit(ctx, width, height, metrics, song, steering, road, state, d
   drawWindshield(ctx, width, height, metrics, road);
   drawWindshieldWeather(ctx, width, height, metrics, state, delta);
   const driverX = width * 0.63;
-  const dashY = height * 0.84;
+  const dashY = height * 0.855;
   const pulse = metrics.glow;
   const dashGradient = ctx.createLinearGradient(0, dashY, 0, height);
   dashGradient.addColorStop(0, "rgba(18, 23, 24, 0.76)");
@@ -683,7 +710,7 @@ function drawCockpit(ctx, width, height, metrics, song, steering, road, state, d
   ctx.fill();
 
   ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
-  ctx.fillRect(0, height * 0.9, width, height * 0.1);
+  ctx.fillRect(0, height * 0.915, width, height * 0.085);
 
   drawHood(ctx, width, height, metrics, steering);
   drawAirmassAndPillars(ctx, width, height, metrics, road);
@@ -820,7 +847,7 @@ function drawWiper(ctx, x, y, length, angle) {
 }
 
 function drawHood(ctx, width, height, metrics, steering) {
-  const y = height * 0.84;
+  const y = height * 0.855;
   const hood = ctx.createLinearGradient(0, y, 0, height);
   hood.addColorStop(0, "rgba(24, 31, 31, 0.82)");
   hood.addColorStop(0.55, "rgba(7, 8, 8, 0.95)");
@@ -859,7 +886,7 @@ function drawAirmassAndPillars(ctx, width, height, metrics, road) {
 }
 
 function drawDashboardDetails(ctx, width, height, metrics, driverX) {
-  const y = height * 0.87;
+  const y = height * 0.884;
   ctx.save();
   ctx.globalAlpha = 0.9;
   ctx.fillStyle = "rgba(0, 0, 0, 0.54)";
@@ -884,19 +911,86 @@ function drawDashboardDetails(ctx, width, height, metrics, driverX) {
 
 function drawInstrumentCluster(ctx, width, height, metrics, driverX) {
   const x = driverX;
-  const y = height * 0.865;
-  ctx.fillStyle = "rgba(0, 0, 0, 0.68)";
-  roundRect(ctx, x - 122, y - 42, 244, 64, 10);
+  const y = height * 0.875;
+  const panelWidth = Math.max(190, Math.min(270, width * 0.28));
+  ctx.fillStyle = "rgba(0, 0, 0, 0.74)";
+  roundRect(ctx, x - panelWidth / 2, y - 50, panelWidth, 76, 10);
   ctx.fill();
-  ctx.strokeStyle = `rgba(79, 145, 148, ${0.12 + metrics.glow * 0.1})`;
-  ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  ctx.arc(x - 58, y, 42, Math.PI * 1.08, Math.PI * 1.92);
-  ctx.arc(x + 58, y, 42, Math.PI * 1.08, Math.PI * 1.92);
+  ctx.strokeStyle = `rgba(88, 174, 184, ${0.18 + metrics.glow * 0.12})`;
+  ctx.lineWidth = 1.2;
   ctx.stroke();
-  ctx.fillStyle = `rgba(112, 212, 203, ${0.15 + metrics.glow * 0.12})`;
-  ctx.fillRect(x - 15, y - 8, 30, 2);
-  ctx.fillRect(x - 13, y + 8, 26, 2);
+
+  drawGauge(ctx, x - panelWidth * 0.24, y, 38, metrics.rpm, "RPM", "x1000", "#7ee7ee", metrics);
+  drawGauge(ctx, x + panelWidth * 0.24, y, 38, clamp(metrics.displaySpeed / 180, 0, 1), "KM/H", String(metrics.displaySpeed), "#f0d173", metrics);
+
+  ctx.fillStyle = `rgba(135, 235, 230, ${0.12 + metrics.glow * 0.1})`;
+  roundRect(ctx, x - 34, y - 17, 68, 28, 5);
+  ctx.fill();
+  ctx.fillStyle = "rgba(232, 250, 255, 0.82)";
+  ctx.font = "800 10px Inter, system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(metrics.manualBoost > 0.05 ? "BOOST" : metrics.manualBrake > 0.05 ? "BRAKE" : "DRIVE", x, y - 1);
+  ctx.fillStyle = "rgba(139, 225, 225, 0.72)";
+  ctx.fillRect(x - 22, y + 8, 44 * clamp(metrics.rpm, 0, 1), 2);
+  ctx.textAlign = "start";
+}
+
+function drawGauge(ctx, x, y, radius, value, label, readout, color, metrics) {
+  const start = Math.PI * 1.1;
+  const end = Math.PI * 1.9;
+  const angle = start + (end - start) * clamp(value, 0, 1);
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.strokeStyle = "rgba(220, 235, 232, 0.12)";
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, start, end);
+  ctx.stroke();
+  ctx.strokeStyle = colorToRgba(color, 0.42 + metrics.glow * 0.18);
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, start, angle);
+  ctx.stroke();
+
+  for (let tick = 0; tick <= 6; tick += 1) {
+    const tickAngle = start + (end - start) * (tick / 6);
+    const inner = radius - (tick % 3 === 0 ? 11 : 7);
+    const outer = radius - 1;
+    ctx.strokeStyle = `rgba(230, 246, 244, ${tick % 3 === 0 ? 0.42 : 0.22})`;
+    ctx.lineWidth = tick % 3 === 0 ? 1.5 : 1;
+    ctx.beginPath();
+    ctx.moveTo(x + Math.cos(tickAngle) * inner, y + Math.sin(tickAngle) * inner);
+    ctx.lineTo(x + Math.cos(tickAngle) * outer, y + Math.sin(tickAngle) * outer);
+    ctx.stroke();
+  }
+
+  const needleLength = radius - 8;
+  ctx.strokeStyle = colorToRgba(color, 0.95);
+  ctx.lineWidth = 2.3;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + Math.cos(angle) * needleLength, y + Math.sin(angle) * needleLength);
+  ctx.stroke();
+  ctx.fillStyle = "#050809";
+  ctx.beginPath();
+  ctx.arc(x, y, 4.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(238, 249, 250, 0.78)";
+  ctx.font = "800 9px Inter, system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(label, x, y + 18);
+  ctx.fillStyle = colorToRgba(color, 0.9);
+  ctx.font = "900 12px Inter, system-ui, sans-serif";
+  ctx.fillText(readout, x, y + 32);
+  ctx.restore();
+}
+
+function colorToRgba(hex, alpha) {
+  const value = hex.replace("#", "");
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function drawSteeringWheel(ctx, width, height, steering, pulse, driverX) {
