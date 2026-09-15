@@ -10,6 +10,7 @@ export default function DrivingScene({ audioData, moodContext, song, playing, vi
     steering: 0,
     driverLane: 0,
     driverVelocity: 0,
+    brakeHold: 0,
     lightning: 0,
     nextLightning: 120,
     controls: { left: false, right: false, up: false, down: false }
@@ -44,14 +45,26 @@ export default function DrivingScene({ audioData, moodContext, song, playing, vi
       state.driverVelocity += (targetVelocity - state.driverVelocity) * Math.min(1, delta * 0.13);
       state.driverLane = clamp(state.driverLane + state.driverVelocity * delta, -0.96, 0.96);
       state.driverLane *= 1 - Math.min(0.07, delta * (manualActive ? 0.006 : 0.018));
-      const driveBoost = 1 + inputThrottle * 0.5 + Math.abs(state.driverVelocity) * 2.2;
-      metrics.manualBoost = Math.max(0, inputThrottle);
-      metrics.manualBrake = Math.max(0, -inputThrottle);
+      state.brakeHold = state.controls.down
+        ? clamp(state.brakeHold + delta * 0.035, 0, 1)
+        : Math.max(0, state.brakeHold - delta * 0.055);
+      if (state.controls.up) state.brakeHold = Math.max(0, state.brakeHold - delta * 0.12);
+      const manualBoost = Math.max(0, inputThrottle);
+      const manualBrake = Math.max(0, -inputThrottle);
+      const turnLoad = clamp(Math.abs(state.driverVelocity) * 7.5 + Math.abs(inputSteer) * 0.18 + Math.abs(state.driverLane) * 0.12, 0, 0.52);
+      const brakeCut = clamp(state.brakeHold * 1.18 + manualBrake * 0.18, 0, 1);
+      const roadMotion = clamp((1 + manualBoost * 0.34) * (1 - turnLoad) * (1 - brakeCut), 0, 1.32);
+      metrics.manualBoost = manualBoost;
+      metrics.manualBrake = manualBrake;
       metrics.manualSteer = inputSteer;
+      metrics.brakeHold = state.brakeHold;
+      metrics.turnLoad = turnLoad;
+      metrics.roadMotion = roadMotion;
       metrics.driveIntensity = Math.min(1, Math.abs(state.driverLane) + Math.abs(state.driverVelocity) * 9 + metrics.manualBoost * 0.5);
-      metrics.displaySpeed = Math.round(48 + metrics.roadSpeed * visualSpeed * 32 + metrics.manualBoost * 42 - metrics.manualBrake * 18 + Math.abs(state.driverVelocity) * 420);
-      metrics.rpm = clamp(0.18 + metrics.roadSpeed * 0.18 + metrics.manualBoost * 0.34 + Math.abs(state.driverVelocity) * 2.8 + audioData.beat * 0.18, 0, 1);
-      if (playing || !reducedMotion) state.z += delta * metrics.roadSpeed * visualSpeed * Math.max(0.45, driveBoost);
+      const baseSpeed = 42 + metrics.roadSpeed * visualSpeed * 38;
+      metrics.displaySpeed = Math.max(0, Math.round(baseSpeed * roadMotion + manualBoost * 18 - state.brakeHold * 22));
+      metrics.rpm = clamp(0.12 + roadMotion * 0.42 + manualBoost * 0.22 + audioData.beat * 0.14 - state.brakeHold * 0.28, 0.04, 1);
+      if (playing || !reducedMotion) state.z += delta * metrics.roadSpeed * visualSpeed * roadMotion;
       state.nextLightning -= delta;
       if (metrics.rain > 0.45 && state.nextLightning < 0) {
         state.lightning = 1;
@@ -929,7 +942,7 @@ function drawInstrumentCluster(ctx, width, height, metrics, driverX) {
   ctx.fillStyle = "rgba(232, 250, 255, 0.82)";
   ctx.font = "800 10px Inter, system-ui, sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText(metrics.manualBoost > 0.05 ? "BOOST" : metrics.manualBrake > 0.05 ? "BRAKE" : "DRIVE", x, y - 1);
+  ctx.fillText(metrics.brakeHold > 0.92 ? "STOP" : metrics.manualBoost > 0.05 ? "BOOST" : metrics.manualBrake > 0.05 ? "BRAKE" : "DRIVE", x, y - 1);
   ctx.fillStyle = "rgba(139, 225, 225, 0.72)";
   ctx.fillRect(x - 22, y + 8, 44 * clamp(metrics.rpm, 0, 1), 2);
   ctx.textAlign = "start";
@@ -1046,7 +1059,7 @@ function drawDrivingHud(ctx, width, height, state, metrics) {
   ctx.stroke();
   ctx.fillStyle = active ? "rgba(230, 250, 255, 0.88)" : "rgba(220, 232, 236, 0.56)";
   ctx.font = "700 11px Inter, system-ui, sans-serif";
-  ctx.fillText(active ? "MANUAL DRIVE" : "AUTO CRUISE", x + 12, y + 18);
+  ctx.fillText(metrics.brakeHold > 0.92 ? "STOPPED" : active ? "MANUAL DRIVE" : "AUTO CRUISE", x + 12, y + 18);
   ctx.font = "700 10px Inter, system-ui, sans-serif";
   ctx.fillStyle = "rgba(170, 205, 210, 0.72)";
   ctx.fillText("WASD / ARROWS", x + 12, y + 34);
