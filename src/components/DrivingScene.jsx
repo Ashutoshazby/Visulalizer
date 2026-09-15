@@ -9,6 +9,7 @@ export default function DrivingScene({ audioData, moodContext, song, playing, vi
     glassDrops: [],
     steering: 0,
     driverLane: 0,
+    driverVelocity: 0,
     lightning: 0,
     nextLightning: 120,
     controls: { left: false, right: false, up: false, down: false }
@@ -38,9 +39,16 @@ export default function DrivingScene({ audioData, moodContext, song, playing, vi
       const state = stateRef.current;
       const inputSteer = Number(state.controls.right) - Number(state.controls.left);
       const inputThrottle = Number(state.controls.up) - Number(state.controls.down);
-      const driveBoost = 1 + inputThrottle * 0.38;
-      state.driverLane = clamp(state.driverLane + inputSteer * delta * 0.022, -0.82, 0.82);
-      state.driverLane *= 1 - Math.min(0.08, delta * 0.018);
+      const manualActive = Boolean(inputSteer || inputThrottle);
+      const targetVelocity = inputSteer * 0.052;
+      state.driverVelocity += (targetVelocity - state.driverVelocity) * Math.min(1, delta * 0.13);
+      state.driverLane = clamp(state.driverLane + state.driverVelocity * delta, -0.96, 0.96);
+      state.driverLane *= 1 - Math.min(0.07, delta * (manualActive ? 0.006 : 0.018));
+      const driveBoost = 1 + inputThrottle * 0.5 + Math.abs(state.driverVelocity) * 2.2;
+      metrics.manualBoost = Math.max(0, inputThrottle);
+      metrics.manualBrake = Math.max(0, -inputThrottle);
+      metrics.manualSteer = inputSteer;
+      metrics.driveIntensity = Math.min(1, Math.abs(state.driverLane) + Math.abs(state.driverVelocity) * 9 + metrics.manualBoost * 0.5);
       if (playing || !reducedMotion) state.z += delta * metrics.roadSpeed * visualSpeed * Math.max(0.45, driveBoost);
       state.nextLightning -= delta;
       if (metrics.rain > 0.45 && state.nextLightning < 0) {
@@ -49,16 +57,20 @@ export default function DrivingScene({ audioData, moodContext, song, playing, vi
       }
       state.lightning = Math.max(0, state.lightning - delta * 0.085);
       const road = makeRoadModel(width, height, state.z, metrics, audioData, visualSpeed, state.driverLane);
-      state.steering += (road.steeringTarget + inputSteer * 0.55 - state.steering) * Math.min(1, delta * 0.08);
+      state.steering += (road.steeringTarget + inputSteer * 0.68 + state.driverLane * 0.16 - state.steering) * Math.min(1, delta * 0.1);
       drawSky(context, width, height, moodContext, audioData, metrics, state, environment);
+      context.save();
+      applyCameraLean(context, width, height, state, metrics);
       drawCity(context, width, height, state.z, metrics, moodContext, road, environment);
       drawStreetLights(context, width, height, state.z, metrics, road, environment);
       drawRoadsideDetails(context, width, height, state.z, metrics, road, environment);
       drawRoad(context, width, height, state.z, metrics, road, environment);
       drawRain(context, width, height, state, delta, metrics);
       drawSpeedStreaks(context, width, height, state.z, metrics, road);
+      context.restore();
       drawOverlays(context, width, height, metrics, moodContext, environment);
       drawCockpit(context, width, height, metrics, song, state.steering, road, state, delta);
+      drawDrivingHud(context, width, height, state, metrics);
       frame = requestAnimationFrame(draw);
     };
 
@@ -170,6 +182,15 @@ function applyEnvironment(metrics, environment) {
     buildingActivity: metrics.buildingActivity * environment.windowAlpha,
     reflections: metrics.reflections * environment.headlightAlpha
   };
+}
+
+function applyCameraLean(ctx, width, height, state, metrics) {
+  const roll = clamp(state.driverLane * 0.028 + state.driverVelocity * 0.42 + metrics.manualSteer * 0.012, -0.055, 0.055);
+  const sway = clamp(-state.driverLane * width * 0.018 - state.driverVelocity * width * 0.18, -width * 0.035, width * 0.035);
+  const lift = -metrics.manualBoost * height * 0.012 + metrics.manualBrake * height * 0.008;
+  ctx.translate(width / 2 + sway, height * 0.56 + lift);
+  ctx.rotate(roll);
+  ctx.translate(-width / 2, -height * 0.56);
 }
 
 function makeRoadModel(width, height, z, metrics, audio, visualSpeed, driverLane = 0) {
@@ -465,6 +486,8 @@ function drawRoad(ctx, width, height, z, metrics, road, environment) {
     drawLaneDash(ctx, road, t1, t2, -0.36, 0.004 + t1 * 0.007, `rgba(176, 186, 184, ${0.1 + t1 * 0.22})`);
     drawLaneDash(ctx, road, t1, t2, 0.36, 0.004 + t1 * 0.007, `rgba(176, 186, 184, ${0.1 + t1 * 0.22})`);
   }
+  drawRumbleStrips(ctx, z, metrics, road);
+  drawRoadChevrons(ctx, z, metrics, road);
 
   const headlight = ctx.createRadialGradient(width / 2, road.dash * 0.94, width * 0.05, width / 2, road.dash * 0.88, width * 0.56);
   headlight.addColorStop(0, `rgba(235, 226, 186, ${(0.11 + metrics.glow * 0.05) * environment.headlightAlpha})`);
@@ -472,6 +495,46 @@ function drawRoad(ctx, width, height, z, metrics, road, environment) {
   headlight.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = headlight;
   ctx.fillRect(0, road.horizon, width, road.dash - road.horizon);
+}
+
+function drawRumbleStrips(ctx, z, metrics, road) {
+  for (let side = -1; side <= 1; side += 2) {
+    for (let i = -1; i < 18; i += 1) {
+      const t = ((i * 0.07 + z * 0.07) % 1.08 + 1.08) % 1.08;
+      if (t < 0.08 || t > 0.98) continue;
+      const offset = side * (0.92 + t * 0.13);
+      const p1 = lanePoint(road, t, offset);
+      const p2 = lanePoint(road, Math.min(0.995, t + 0.018 + t * 0.018), offset);
+      const alpha = 0.08 + t * 0.18 + metrics.driveIntensity * 0.1;
+      ctx.strokeStyle = `rgba(231, 214, 132, ${alpha})`;
+      ctx.lineWidth = 2 + t * 6;
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawRoadChevrons(ctx, z, metrics, road) {
+  if (metrics.driveIntensity < 0.12) return;
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  for (let i = 0; i < 7; i += 1) {
+    const t = ((i * 0.13 + z * 0.038) % 1 + 1) % 1;
+    if (t < 0.22 || t > 0.92) continue;
+    const center = lanePoint(road, t, 0);
+    const width = road.halfAt(t) * (0.16 + t * 0.08);
+    const height = 10 + t * 36;
+    ctx.strokeStyle = `rgba(125, 224, 238, ${metrics.driveIntensity * (0.05 + t * 0.09)})`;
+    ctx.lineWidth = 1 + t * 4;
+    ctx.beginPath();
+    ctx.moveTo(center.x - width, center.y + height * 0.45);
+    ctx.lineTo(center.x, center.y);
+    ctx.lineTo(center.x + width, center.y + height * 0.45);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function drawRoadEdge(ctx, points, color, lineWidth) {
@@ -572,7 +635,7 @@ function drawRain(ctx, width, height, state, delta, metrics) {
 
 function drawSpeedStreaks(ctx, width, height, z, metrics, road) {
   const beat = Number.isFinite(metrics.beat) ? metrics.beat : 0;
-  const intensity = Math.max(0, road.visualSpeed - 1) / 1.25 + beat * 0.35;
+  const intensity = Math.max(0, road.visualSpeed - 1) / 1.25 + beat * 0.35 + metrics.manualBoost * 0.45 + metrics.driveIntensity * 0.2;
   if (intensity <= 0.03) return;
   ctx.save();
   ctx.globalCompositeOperation = "screen";
@@ -627,7 +690,28 @@ function drawCockpit(ctx, width, height, metrics, song, steering, road, state, d
   drawDashboardDetails(ctx, width, height, metrics, driverX);
   drawInstrumentCluster(ctx, width, height, metrics, driverX);
   drawSteeringWheel(ctx, width, height, steering, pulse, driverX);
+  drawPedalGlow(ctx, width, height, metrics);
+}
 
+function drawPedalGlow(ctx, width, height, metrics) {
+  const y = height * 0.965;
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  if (metrics.manualBoost > 0.02) {
+    const boost = ctx.createRadialGradient(width * 0.76, y, 2, width * 0.76, y, width * 0.12);
+    boost.addColorStop(0, `rgba(116, 226, 238, ${0.14 + metrics.manualBoost * 0.18})`);
+    boost.addColorStop(1, "rgba(116, 226, 238, 0)");
+    ctx.fillStyle = boost;
+    ctx.fillRect(width * 0.58, height * 0.82, width * 0.34, height * 0.18);
+  }
+  if (metrics.manualBrake > 0.02) {
+    const brake = ctx.createRadialGradient(width * 0.27, y, 2, width * 0.27, y, width * 0.11);
+    brake.addColorStop(0, `rgba(238, 92, 78, ${0.12 + metrics.manualBrake * 0.16})`);
+    brake.addColorStop(1, "rgba(238, 92, 78, 0)");
+    ctx.fillStyle = brake;
+    ctx.fillRect(width * 0.12, height * 0.82, width * 0.3, height * 0.18);
+  }
+  ctx.restore();
 }
 
 function drawWindshield(ctx, width, height, metrics, road) {
@@ -850,6 +934,38 @@ function drawSteeringWheel(ctx, width, height, steering, pulse, driverX) {
   ctx.fillStyle = "#040506";
   ctx.beginPath();
   ctx.arc(0, -radius * 0.06, radius * 0.22, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawDrivingHud(ctx, width, height, state, metrics) {
+  const active = Math.abs(state.driverLane) > 0.04 || Math.abs(state.driverVelocity) > 0.004 || metrics.manualBoost > 0 || metrics.manualBrake > 0;
+  const x = width - Math.min(260, width * 0.34);
+  const y = Math.max(54, height * 0.08);
+  const panelWidth = Math.min(222, width * 0.42);
+  ctx.save();
+  ctx.globalAlpha = active ? 0.72 : 0.32;
+  ctx.fillStyle = "rgba(3, 7, 10, 0.42)";
+  roundRect(ctx, x, y, panelWidth, 46, 8);
+  ctx.fill();
+  ctx.strokeStyle = active ? "rgba(122, 224, 238, 0.3)" : "rgba(210, 230, 235, 0.12)";
+  ctx.stroke();
+  ctx.fillStyle = active ? "rgba(230, 250, 255, 0.88)" : "rgba(220, 232, 236, 0.56)";
+  ctx.font = "700 11px Inter, system-ui, sans-serif";
+  ctx.fillText(active ? "MANUAL DRIVE" : "AUTO CRUISE", x + 12, y + 18);
+  ctx.font = "700 10px Inter, system-ui, sans-serif";
+  ctx.fillStyle = "rgba(170, 205, 210, 0.72)";
+  ctx.fillText("WASD / ARROWS", x + 12, y + 34);
+  const laneX = x + panelWidth - 64;
+  ctx.strokeStyle = "rgba(150, 180, 184, 0.28)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(laneX, y + 31);
+  ctx.lineTo(laneX + 44, y + 31);
+  ctx.stroke();
+  ctx.fillStyle = "rgba(122, 224, 238, 0.86)";
+  ctx.beginPath();
+  ctx.arc(laneX + 22 + state.driverLane * 19, y + 31, 3.6, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
