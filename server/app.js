@@ -1,5 +1,6 @@
 import express from "express";
 import { createJioSaavnProvider } from "./music/JioSaavnProvider.js";
+import { getProfile, libraryStorageMode, listProfiles, registerProfile, removeFavorite, saveFavorite } from "./library/SharedLibraryStore.js";
 
 const VERCEL_AUDIO_CHUNK_BYTES = 4_000_000;
 const app = express();
@@ -27,7 +28,7 @@ app.get("/", (_req, res) => {
 });
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, provider: provider.name });
+  res.json({ ok: true, provider: provider.name, library: libraryStorageMode() });
 });
 
 app.get("/api/music/search", async (req, res) => {
@@ -59,6 +60,76 @@ app.get("/api/music/recommendations", async (req, res) => {
     res.json({ ok: true, songs });
   } catch (error) {
     res.status(502).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/api/library/users", async (_req, res) => {
+  try {
+    res.json({ ok: true, users: await listProfiles() });
+  } catch (error) {
+    res.status(503).json({ ok: false, error: `Shared library unavailable: ${error.message}` });
+  }
+});
+
+app.get("/api/library", async (req, res) => {
+  const userName = String(req.query.user || "").trim();
+  if (!userName) {
+    res.status(400).json({ ok: false, error: "Missing user name." });
+    return;
+  }
+
+  try {
+    const entry = await getProfile(userName);
+    res.json({ ok: true, user: entry.name, songs: entry.songs });
+  } catch (error) {
+    res.status(503).json({ ok: false, error: `Shared library unavailable: ${error.message}` });
+  }
+});
+
+app.post("/api/library/profile", async (req, res) => {
+  const userName = String(req.body?.user || "").trim();
+  if (!userName) {
+    res.status(400).json({ ok: false, error: "Missing user name." });
+    return;
+  }
+
+  try {
+    const profile = await registerProfile(userName);
+    res.json({ ok: true, user: profile.name, songs: profile.songs });
+  } catch (error) {
+    res.status(503).json({ ok: false, error: `Profile could not be saved: ${error.message}` });
+  }
+});
+
+app.post("/api/library/save", async (req, res) => {
+  const userName = String(req.body?.user || "").trim();
+  const song = req.body?.song;
+  if (!userName || !song?.id) {
+    res.status(400).json({ ok: false, error: "Missing user name or song payload." });
+    return;
+  }
+
+  try {
+    const profile = await saveFavorite(userName, song);
+    res.json({ ok: true, user: profile.name, songs: profile.songs });
+  } catch (error) {
+    res.status(503).json({ ok: false, error: `Favorite could not be saved: ${error.message}` });
+  }
+});
+
+app.post("/api/library/remove", async (req, res) => {
+  const userName = String(req.body?.user || "").trim();
+  const songId = String(req.body?.songId || "").trim();
+  if (!userName || !songId) {
+    res.status(400).json({ ok: false, error: "Missing user name or song id." });
+    return;
+  }
+
+  try {
+    const profile = await removeFavorite(userName, songId);
+    res.json({ ok: true, user: profile.name, songs: profile.songs });
+  } catch (error) {
+    res.status(503).json({ ok: false, error: `Favorite could not be removed: ${error.message}` });
   }
 });
 
