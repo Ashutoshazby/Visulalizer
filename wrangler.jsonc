@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "saanjh-music-api",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-09-27",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "SAAVN_API_BASE": "https://saavan-api-psi.vercel.app"
+  },
+  "d1_databases": [
+    {
+      "binding": "LIBRARY_DB",
+      "database_name": "saanjh-library",
+      "database_id": "d0170591-fae2-48d3-b610-16d70be6bcd0",
+      "migrations_dir": "worker/migrations"
+    }
+  ]
+}

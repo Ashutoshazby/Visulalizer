@@ -4,7 +4,7 @@ import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from "expo-au
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Easing, FlatList, Image, ImageBackground, Keyboard, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 
-const API_BASE = process.env.EXPO_PUBLIC_API_BASE || "https://saanjh-music-api.vercel.app";
+const API_BASE = process.env.EXPO_PUBLIC_API_BASE || "https://saanjh-music-api.night-drive-radio.workers.dev";
 const PROFILE_FILE = `${FileSystem.documentDirectory ?? "file:///"}saanjh-profile.json`;
 
 type Song = { id: string; title: string; artist?: string; album?: string; language?: string; artwork?: string };
