@@ -3,7 +3,7 @@ import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from "expo-au
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Animated, Easing, FlatList, Image, ImageBackground, Keyboard, Pressable, SafeAreaView, StyleSheet, Text, TextInput, View } from "react-native";
 
-const API_BASE = process.env.EXPO_PUBLIC_API_BASE || "https://visulalizer-api.onrender.com";
+const API_BASE = process.env.EXPO_PUBLIC_API_BASE || "https://saanjh-music-api.vercel.app";
 
 type Song = { id: string; title: string; artist?: string; album?: string; language?: string; artwork?: string };
 
