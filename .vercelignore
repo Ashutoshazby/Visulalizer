@@ -1,0 +1,8 @@
+mobile
+src
+public
+dist
+scripts
+index.html
+netlify.toml
+vite.config.js
