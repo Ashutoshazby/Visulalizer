@@ -3,8 +3,8 @@ import { BlobNotFoundError, BlobPreconditionFailedError, get, put } from "@verce
 const LIBRARY_PATH = "saanjh/shared-library.json";
 const memoryState = { profiles: {} };
 
-export async function listProfiles() {
-  const { state } = await readState();
+export async function listProfiles(auth = {}) {
+  const { state } = await readState(auth);
   return Object.values(state.profiles)
     .map((profile) => ({
       name: profile.name,
@@ -14,25 +14,25 @@ export async function listProfiles() {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export function libraryStorageMode() {
-  return hasBlobConfig() ? "vercel-blob" : process.env.VERCEL ? "unconfigured" : "memory";
+export function libraryStorageMode(auth = {}) {
+  return hasBlobConfig(auth) ? "vercel-blob" : process.env.VERCEL ? "unconfigured" : "memory";
 }
 
-export async function getProfile(userName) {
-  const { state } = await readState();
+export async function getProfile(userName, auth = {}) {
+  const { state } = await readState(auth);
   const key = slugify(userName);
   return state.profiles[key] || { name: cleanName(userName), songs: [] };
 }
 
-export async function registerProfile(userName) {
+export async function registerProfile(userName, auth = {}) {
   return updateState((state) => {
     const key = slugify(userName);
     state.profiles[key] ||= { name: cleanName(userName), songs: [] };
     return state.profiles[key];
-  });
+  }, auth);
 }
 
-export async function saveFavorite(userName, song) {
+export async function saveFavorite(userName, song, auth = {}) {
   return updateState((state) => {
     const key = slugify(userName);
     const profile = state.profiles[key] || { name: cleanName(userName), songs: [] };
@@ -41,28 +41,28 @@ export async function saveFavorite(userName, song) {
     profile.songs = [nextSong, ...profile.songs.filter((item) => item.id !== nextSong.id)].slice(0, 200);
     state.profiles[key] = profile;
     return profile;
-  });
+  }, auth);
 }
 
-export async function removeFavorite(userName, songId) {
+export async function removeFavorite(userName, songId, auth = {}) {
   return updateState((state) => {
     const key = slugify(userName);
     const profile = state.profiles[key] || { name: cleanName(userName), songs: [] };
     profile.songs = profile.songs.filter((song) => song.id !== String(songId));
     state.profiles[key] = profile;
     return profile;
-  });
+  }, auth);
 }
 
-async function updateState(mutator) {
-  if (!hasBlobConfig()) {
+async function updateState(mutator, auth) {
+  if (!hasBlobConfig(auth)) {
     if (process.env.VERCEL) throw new Error("Vercel Blob storage is not connected.");
     const result = mutator(memoryState);
     return structuredClone(result);
   }
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    const { state, etag } = await readState();
+    const { state, etag } = await readState(auth);
     const result = mutator(state);
     try {
       await put(LIBRARY_PATH, JSON.stringify(state), {
@@ -71,7 +71,8 @@ async function updateState(mutator) {
         addRandomSuffix: false,
         cacheControlMaxAge: 60,
         contentType: "application/json",
-        ...(etag ? { ifMatch: etag } : {})
+        ...(etag ? { ifMatch: etag } : {}),
+        ...blobAuthOptions(auth)
       });
       return structuredClone(result);
     } catch (error) {
@@ -82,15 +83,19 @@ async function updateState(mutator) {
   throw new Error("Shared library update could not be completed.");
 }
 
-async function readState() {
-  if (!hasBlobConfig()) {
+async function readState(auth = {}) {
+  if (!hasBlobConfig(auth)) {
     if (process.env.VERCEL) throw new Error("Vercel Blob storage is not connected.");
     return { state: memoryState, etag: null };
   }
 
   let result;
   try {
-    result = await get(LIBRARY_PATH, { access: "private", useCache: false });
+    result = await get(LIBRARY_PATH, {
+      access: "private",
+      useCache: false,
+      ...blobAuthOptions(auth)
+    });
   } catch (error) {
     if (error instanceof BlobNotFoundError) return { state: { profiles: {} }, etag: null };
     throw error;
@@ -132,6 +137,13 @@ function slugify(value) {
     .replace(/^-+|-+$/g, "") || "guest";
 }
 
-function hasBlobConfig() {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN || (process.env.VERCEL_OIDC_TOKEN && process.env.BLOB_STORE_ID));
+function hasBlobConfig(auth = {}) {
+  const { oidcToken, storeId } = blobAuthOptions(auth);
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN || (oidcToken && storeId));
+}
+
+function blobAuthOptions(auth = {}) {
+  const oidcToken = auth.oidcToken || process.env.VERCEL_OIDC_TOKEN;
+  const storeId = auth.storeId || process.env.BLOB_STORE_ID;
+  return oidcToken && storeId ? { oidcToken, storeId } : {};
 }

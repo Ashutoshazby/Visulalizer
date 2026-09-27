@@ -27,8 +27,8 @@ app.get("/", (_req, res) => {
   res.json({ ok: true, name: "Saanjh Music API", provider: provider.name });
 });
 
-app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, provider: provider.name, library: libraryStorageMode() });
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, provider: provider.name, library: libraryStorageMode(libraryAuth(req)) });
 });
 
 app.get("/api/music/search", async (req, res) => {
@@ -63,9 +63,9 @@ app.get("/api/music/recommendations", async (req, res) => {
   }
 });
 
-app.get("/api/library/users", async (_req, res) => {
+app.get("/api/library/users", async (req, res) => {
   try {
-    res.json({ ok: true, users: await listProfiles() });
+    res.json({ ok: true, users: await listProfiles(libraryAuth(req)) });
   } catch (error) {
     res.status(503).json({ ok: false, error: `Shared library unavailable: ${error.message}` });
   }
@@ -79,7 +79,7 @@ app.get("/api/library", async (req, res) => {
   }
 
   try {
-    const entry = await getProfile(userName);
+    const entry = await getProfile(userName, libraryAuth(req));
     res.json({ ok: true, user: entry.name, songs: entry.songs });
   } catch (error) {
     res.status(503).json({ ok: false, error: `Shared library unavailable: ${error.message}` });
@@ -94,7 +94,7 @@ app.post("/api/library/profile", async (req, res) => {
   }
 
   try {
-    const profile = await registerProfile(userName);
+    const profile = await registerProfile(userName, libraryAuth(req));
     res.json({ ok: true, user: profile.name, songs: profile.songs });
   } catch (error) {
     res.status(503).json({ ok: false, error: `Profile could not be saved: ${error.message}` });
@@ -110,7 +110,7 @@ app.post("/api/library/save", async (req, res) => {
   }
 
   try {
-    const profile = await saveFavorite(userName, song);
+    const profile = await saveFavorite(userName, song, libraryAuth(req));
     res.json({ ok: true, user: profile.name, songs: profile.songs });
   } catch (error) {
     res.status(503).json({ ok: false, error: `Favorite could not be saved: ${error.message}` });
@@ -126,7 +126,7 @@ app.post("/api/library/remove", async (req, res) => {
   }
 
   try {
-    const profile = await removeFavorite(userName, songId);
+    const profile = await removeFavorite(userName, songId, libraryAuth(req));
     res.json({ ok: true, user: profile.name, songs: profile.songs });
   } catch (error) {
     res.status(503).json({ ok: false, error: `Favorite could not be removed: ${error.message}` });
@@ -221,3 +221,11 @@ function copyHeader(source, target, sourceName, targetName) {
 }
 
 export default app;
+
+function libraryAuth(req) {
+  const header = req.headers["x-vercel-oidc-token"];
+  return {
+    oidcToken: Array.isArray(header) ? header[0] : header,
+    storeId: process.env.BLOB_STORE_ID
+  };
+}
