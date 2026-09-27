@@ -1,21 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import DrivingScene from "./components/DrivingScene.jsx";
+import SunsetBeachScene from "./components/SunsetBeachScene.jsx";
 import MusicControls from "./components/MusicControls.jsx";
+import MusicSearch from "./components/MusicSearch.jsx";
 import MoodSelector from "./components/MoodSelector.jsx";
 import LanguageSelector from "./components/LanguageSelector.jsx";
 import SongInfo from "./components/SongInfo.jsx";
-import TimeDisplay from "./components/TimeDisplay.jsx";
-import { AudioEngine } from "./audio/AudioEngine.js";
-import { getCurrentMood, getTimeMessage } from "./mood/MoodEngine.js";
+import { getCurrentMood } from "./mood/MoodEngine.js";
 import { selectSong } from "./music/SongSelector.js";
-import { API_BASE, getRecommendations, getStreamUrl } from "./music/MusicProvider.js";
+import { API_BASE, getRecommendations, getStreamUrl, searchSongs } from "./music/MusicProvider.js";
 import { loadPreferences, recordPlay, recordSelection, savePreferences } from "./storage/UserPreferences.js";
 
-const INITIAL_AUDIO = { bass: 0, mid: 0, treble: 0, energy: 0, beat: 0 };
 const MAX_FAILED_SONGS = 5;
 
 export default function App() {
-  const audioEngine = useRef(null);
   const audioRef = useRef(null);
   const playlistRef = useRef([]);
   const songIndexRef = useRef(-1);
@@ -26,21 +23,23 @@ export default function App() {
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(0.78);
   const [song, setSong] = useState(null);
-  const [audioData, setAudioData] = useState(INITIAL_AUDIO);
   const [status, setStatus] = useState("");
   const [preferences, setPreferences] = useState(() => loadPreferences());
   const [moodOverride, setMoodOverride] = useState("auto");
   const [languageOverride, setLanguageOverride] = useState("auto");
-  const [controlsVisible, setControlsVisible] = useState(true);
-  const [visualSpeed, setVisualSpeed] = useState(1);
   const [fullscreen, setFullscreen] = useState(false);
   const [clockTick, setClockTick] = useState(() => Date.now());
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
 
   const moodContext = useMemo(() => {
     return getCurrentMood(new Date(clockTick), preferences, moodOverride, languageOverride);
   }, [clockTick, preferences, moodOverride, languageOverride]);
-
-  const timeMessage = useMemo(() => getTimeMessage(new Date(clockTick)), [clockTick, started, song?.id]);
 
   const refreshPreferences = useCallback((next) => {
     setPreferences(next);
@@ -49,10 +48,12 @@ export default function App() {
 
   const playSong = useCallback(async (nextSong, nextIndex) => {
     if (!nextSong?.id) {
-      setStatus("That track is missing a playable song id. Trying another road.");
+      setStatus("That track is missing a playable song id. Trying another song.");
       return false;
     }
     setSong(nextSong);
+    setCurrentTime(0);
+    setDuration(0);
     songIndexRef.current = nextIndex;
     const audio = audioRef.current;
     const streamEndpoint = getStreamUrl(nextSong);
@@ -62,7 +63,7 @@ export default function App() {
     audio.preload = "auto";
 
     if (import.meta.env.DEV) {
-      console.info("[NightDrive] selected song", {
+      console.info("[Saanjh] selected song", {
         id: nextSong.id,
         title: nextSong.title,
         streamEndpoint,
@@ -85,13 +86,13 @@ export default function App() {
       logAudioError(audio, nextSong, streamEndpoint, error);
       setStatus(audioFailuresRef.current >= MAX_FAILED_SONGS
         ? "Several songs failed to stream. Please try again in a bit."
-        : "That song could not stream. Trying another road song.");
+        : "That song could not stream. Trying another song.");
       return false;
     }
   }, [moodContext, muted, refreshPreferences, volume]);
 
-  const loadDriveQueue = useCallback(async () => {
-    setStatus("Finding the road song...");
+  const loadMusicQueue = useCallback(async () => {
+    setStatus("Finding something beautiful...");
     try {
       const candidates = await getRecommendations({
         mood: moodContext.mood,
@@ -115,27 +116,23 @@ export default function App() {
     }
   }, [moodContext, playSong, preferences, song?.id]);
 
-  const startDrive = useCallback(async () => {
+  const startListening = useCallback(async () => {
     configureAudioForApi(audioRef.current);
-    if (!audioEngine.current) {
-      audioEngine.current = new AudioEngine(audioRef.current, setAudioData);
-    }
-    await audioEngine.current.resume();
     setStarted(true);
-    await loadDriveQueue();
-  }, [loadDriveQueue]);
+    await loadMusicQueue();
+  }, [loadMusicQueue]);
 
   const next = useCallback(async () => {
     const queue = playlistRef.current;
-    if (!queue.length) return loadDriveQueue();
+    if (!queue.length) return loadMusicQueue();
     for (let nextIndex = songIndexRef.current + 1; nextIndex < queue.length; nextIndex += 1) {
       if (failedSongIdsRef.current.has(queue[nextIndex]?.id)) continue;
       const played = await playSong(queue[nextIndex], nextIndex);
       if (played) return;
       if (audioFailuresRef.current >= MAX_FAILED_SONGS) return;
     }
-    return loadDriveQueue();
-  }, [loadDriveQueue, playSong]);
+    return loadMusicQueue();
+  }, [loadMusicQueue, playSong]);
 
   const previous = useCallback(async () => {
     const queue = playlistRef.current;
@@ -165,12 +162,12 @@ export default function App() {
       if (played) return;
     }
 
-    await loadDriveQueue();
-  }, [loadDriveQueue, playSong]);
+    await loadMusicQueue();
+  }, [loadMusicQueue, playSong]);
 
   const togglePlay = useCallback(async () => {
     const audio = audioRef.current;
-    if (!started) return startDrive();
+    if (!started) return startListening();
     if (audio.paused) {
       try {
         await audio.play();
@@ -185,7 +182,7 @@ export default function App() {
       audio.pause();
       setPlaying(false);
     }
-  }, [song, startDrive, started]);
+  }, [song, startListening, started]);
 
   const updateMood = (value) => {
     setMoodOverride(value);
@@ -203,6 +200,42 @@ export default function App() {
     } else {
       await document.exitFullscreen?.();
     }
+  };
+
+  const runSearch = async (event) => {
+    event?.preventDefault();
+    const query = searchQuery.trim();
+    if (!query) return;
+    setSearching(true);
+    setSearchError("");
+    try {
+      const results = await searchSongs({ query, language: languageOverride, limit: 24 });
+      setSearchResults(results);
+      if (!results.length) setSearchError("No songs found. Try a song or artist name.");
+    } catch (error) {
+      setSearchError(`Search failed: ${error.message}`);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const playSearchResult = async (selectedSong) => {
+    const selectedIndex = searchResults.findIndex((item) => item.id === selectedSong.id);
+    playlistRef.current = searchResults;
+    failedSongIdsRef.current.clear();
+    audioFailuresRef.current = 0;
+    setSearchOpen(false);
+    if (!started) {
+      configureAudioForApi(audioRef.current);
+      setStarted(true);
+    }
+    await playSong(selectedSong, Math.max(0, selectedIndex));
+  };
+
+  const seek = (value) => {
+    if (!audioRef.current || !Number.isFinite(value)) return;
+    audioRef.current.currentTime = value;
+    setCurrentTime(value);
   };
 
   useEffect(() => {
@@ -230,7 +263,7 @@ export default function App() {
 
   useEffect(() => {
     if (!started) return;
-    loadDriveQueue();
+    loadMusicQueue();
   }, [moodOverride, languageOverride]);
 
   useEffect(() => {
@@ -245,55 +278,49 @@ export default function App() {
     return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
   }, []);
 
-  useEffect(() => {
-    let timer;
-    const show = () => {
-      setControlsVisible(true);
-      clearTimeout(timer);
-      timer = setTimeout(() => setControlsVisible(false), 3800);
-    };
-    window.addEventListener("mousemove", show);
-    window.addEventListener("touchstart", show);
-    show();
-    return () => {
-      clearTimeout(timer);
-      window.removeEventListener("mousemove", show);
-      window.removeEventListener("touchstart", show);
-    };
-  }, []);
-
   return (
     <main className={`app mood-${moodContext.mood} phase-${moodContext.phase}`}>
-      <audio ref={audioRef} preload="auto" onEnded={next} onError={handleAudioError} />
-      <DrivingScene audioData={audioData} moodContext={moodContext} song={song} playing={playing} visualSpeed={visualSpeed} />
+      <audio
+        ref={audioRef}
+        preload="auto"
+        onEnded={next}
+        onError={handleAudioError}
+        onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime || 0)}
+        onDurationChange={(event) => setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0)}
+      />
+      <SunsetBeachScene playing={playing} />
       <button className="fullscreen-button" onClick={toggleFullscreen} title={fullscreen ? "Exit fullscreen" : "Fullscreen"} aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}>
         {fullscreen ? "↙" : "⛶"}
       </button>
-      <div className="cockpit">
-        <TimeDisplay context={moodContext} message={timeMessage} />
+      <div className="music-shell">
         {!started ? (
           <section className="first-run">
-            <h1>READY FOR A DRIVE?</h1>
-            <p>Hindi • Punjabi • Haryanvi</p>
-            <button className="start-button" onClick={startDrive}>START DRIVE</button>
+            <p className="brand-kicker">MUSIC FOR SLOW EVENINGS</p>
+            <h1>SAANJH</h1>
+            <p>Hindi • Punjabi • English • Haryanvi</p>
+            <button className="start-button" onClick={startListening}>ENTER</button>
+            <small className="made-by">Made by Ashu</small>
             {status && <span className="status">{status}</span>}
           </section>
         ) : (
-          <>
-            <div className={`bottom-player ${controlsVisible ? "is-visible" : ""}`}>
-              <SongInfo song={song} moodContext={moodContext} speed={(moodContext.speed + Math.round(audioData.beat * 18)) * visualSpeed} />
+          <section className="player-layout">
+            <header className="app-brand"><span>SAANJH</span><small>Made by Ashu</small></header>
+            <div className="bottom-player">
+              <SongInfo song={song} moodContext={moodContext} />
               <MusicControls
                 playing={playing}
                 muted={muted}
                 volume={volume}
-                visualSpeed={visualSpeed}
+                currentTime={currentTime}
+                duration={duration}
                 onTogglePlay={togglePlay}
                 onNext={next}
                 onPrevious={previous}
-                onShuffle={loadDriveQueue}
+                onShuffle={loadMusicQueue}
                 onMute={() => setMuted((value) => !value)}
                 onVolume={setVolume}
-                onVisualSpeed={setVisualSpeed}
+                onSeek={seek}
+                onOpenSearch={() => setSearchOpen(true)}
               />
               <div className="selectors">
                 <MoodSelector value={moodOverride} onChange={updateMood} />
@@ -301,9 +328,21 @@ export default function App() {
               </div>
               {status && <span className="status">{status}</span>}
             </div>
-          </>
+          </section>
         )}
       </div>
+      <MusicSearch
+        open={searchOpen}
+        query={searchQuery}
+        results={searchResults}
+        loading={searching}
+        error={searchError}
+        currentSongId={song?.id}
+        onQuery={setSearchQuery}
+        onSearch={runSearch}
+        onSelect={playSearchResult}
+        onClose={() => setSearchOpen(false)}
+      />
     </main>
   );
 }
@@ -362,7 +401,7 @@ function logAudioError(audio, song, streamEndpoint, errorEvent) {
     eventType: errorEvent?.type,
     error: errorEvent instanceof Error ? errorEvent.message : undefined
   };
-  console.warn("[NightDrive] audio error", details);
+  console.warn("[Saanjh] audio error", details);
 }
 
 function readMediaError(audio) {

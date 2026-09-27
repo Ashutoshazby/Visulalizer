@@ -1,6 +1,6 @@
-# Night Drive Radio
+# Saanjh Music
 
-A cinematic virtual night-drive web app that selects Indian music online and maps audio energy into a moving driving scene.
+A sunset-beach music player for Indian and English music, with animated waves, mood and language recommendations, search, and native Android/iOS support.
 
 ## Music Provider
 
@@ -38,3 +38,15 @@ SAAVN_API_BASE=https://saavan-api-psi.vercel.app
 ```
 
 No database is required. Listening preferences and lightweight history stay in `localStorage`.
+
+## Native App
+
+The `mobile/` folder contains a login-free Expo React Native player for Android and iOS. It opens directly to recommendations and search, and uses the same Render API and streaming proxy as the web app. Make sure that API service is active before distributing the app.
+
+```bash
+cd mobile
+npm install
+npm start
+```
+
+For an installable Android test APK, configure Expo EAS once and run `npx eas build --profile preview --platform android`.
