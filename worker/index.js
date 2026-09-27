@@ -14,7 +14,9 @@ export default {
     try {
       const url = new URL(request.url);
       const provider = createJioSaavnProvider({
-        baseUrl: env.SAAVN_API_BASE || "https://saavan-api-psi.vercel.app"
+        baseUrl: env.SAAVN_API_BASE || "https://saavan-api-psi.vercel.app",
+        maxRecommendationAttempts: 5,
+        nativeDetailLimit: 4
       });
 
       if (url.pathname === "/") {

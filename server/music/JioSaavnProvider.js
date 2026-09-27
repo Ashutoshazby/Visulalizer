@@ -93,9 +93,11 @@ export function createJioSaavnProvider(config) {
 class JioSaavnProvider extends MusicProvider {
   name = "jiosaavn-compatible";
 
-  constructor({ baseUrl }) {
+  constructor({ baseUrl, maxRecommendationAttempts = 16, nativeDetailLimit = 12 }) {
     super();
     this.baseUrl = baseUrl.replace(/\/$/, "");
+    this.maxRecommendationAttempts = maxRecommendationAttempts;
+    this.nativeDetailLimit = nativeDetailLimit;
   }
 
   async searchSongs({ query, language = "auto", limit = 12, page = 0 }) {
@@ -146,7 +148,7 @@ class JioSaavnProvider extends MusicProvider {
       : [...(MOOD_QUERIES[mood] || discovery)];
     const queries = shuffle(baseQueries);
     const pages = shuffle([0, 1, 2, 3, 4, 5]);
-    const attempts = Math.min(16, queries.length);
+    const attempts = Math.min(this.maxRecommendationAttempts, queries.length);
 
     for (let i = 0; i < attempts && uniqueSongs(pool).length < limit * 1.25; i += 1) {
       const query = queries[i];
@@ -199,7 +201,7 @@ class JioSaavnProvider extends MusicProvider {
     const hits = [...(json?.songs?.data || []), ...(json?.topquery?.data || [])]
       .filter((song) => song?.type === "song")
       .filter((song) => language === "auto" || language === "surprise" || song?.more_info?.language === language);
-    const ids = uniqueBy(hits, "id").map((song) => song.id).slice(0, limit);
+    const ids = uniqueBy(hits, "id").map((song) => song.id).slice(0, Math.min(limit, this.nativeDetailLimit));
     const details = await Promise.allSettled(ids.map((id) => this.getNativeSong(id)));
     return details
       .filter((result) => result.status === "fulfilled")
