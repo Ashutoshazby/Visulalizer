@@ -2,7 +2,7 @@
   "expo": {
     "name": "Saanjh Music",
     "slug": "saanjh-music",
-    "version": "1.5.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/saanjh-logo.png",
     "userInterfaceStyle": "dark",
@@ -21,7 +21,7 @@
     },
     "android": {
       "package": "com.ashutosh.nightdriveradio",
-      "versionCode": 6,
+      "versionCode": 7,
       "adaptiveIcon": {
         "backgroundColor": "#07324B",
         "foregroundImage": "./assets/saanjh-logo.png"

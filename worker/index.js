@@ -47,6 +47,13 @@ export default {
         const id = decodeURIComponent(url.pathname.slice("/api/music/song/".length));
         return json({ ok: true, song: await provider.getSong(id) });
       }
+      if (url.pathname === "/api/music/lyrics" && request.method === "GET") {
+        const id = String(url.searchParams.get("id") || "").trim();
+        if (!id) return json({ ok: false, error: "Missing song id." }, 400);
+        const cached = await caches.default.match(cacheKey(request));
+        if (cached) return withCors(cached);
+        return cacheJson(request, { ok: true, ...(await provider.getLyrics(id)) }, 86400);
+      }
       if (url.pathname === "/api/music/recommendations" && request.method === "GET") {
         const cached = await caches.default.match(cacheKey(request));
         if (cached) return withCors(cached);
@@ -105,7 +112,8 @@ async function streamSong(request, url, provider) {
   if (!id) return json({ ok: false, error: "Missing song id." }, 400);
 
   const song = await provider.getSong(id);
-  const streamUrl = provider.getStreamUrl(song);
+  const quality = String(url.searchParams.get("quality") || "high");
+  const streamUrl = provider.getStreamUrl(song, quality);
   if (!streamUrl) return json({ ok: false, error: "No playable stream URL found for this song." }, 404);
 
   const upstreamHeaders = new Headers({ accept: "audio/*,*/*;q=0.9", "user-agent": "SaanjhMusic/1.2" });
@@ -232,7 +240,7 @@ async function cacheJson(request, payload, maxAge) {
 
 function cacheKey(request) {
   const url = new URL(request.url);
-  url.searchParams.set("_cache", "v3");
+  url.searchParams.set("_cache", "v4");
   return new Request(url, request);
 }
 

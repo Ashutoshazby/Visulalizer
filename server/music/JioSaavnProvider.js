@@ -198,8 +198,31 @@ class JioSaavnProvider extends MusicProvider {
     }
   }
 
-  getStreamUrl(song) {
+  getStreamUrl(song, quality = "high") {
+    const variants = song?.streamVariants || [];
+    if (variants.length) {
+      const order = quality === "low" ? ["48kbps", "96kbps"] : quality === "standard" ? ["160kbps", "96kbps"] : ["320kbps", "160kbps"];
+      for (const wanted of order) {
+        const match = variants.find((item) => String(item.quality).toLowerCase() === wanted);
+        if (match?.url) return match.url;
+      }
+    }
     return song?.streamUrl || null;
+  }
+
+  async getLyrics(id) {
+    if (!id) throw new Error("Missing song id.");
+    const url = new URL("https://www.jiosaavn.com/api.php");
+    url.searchParams.set("__call", "lyrics.getLyrics");
+    url.searchParams.set("_format", "json");
+    url.searchParams.set("_marker", "0");
+    url.searchParams.set("lyrics_id", id);
+    const data = await this.fetchJson(url);
+    if (!data?.lyrics) return { lyrics: "", copyright: "" };
+    return {
+      lyrics: clean(String(data.lyrics).replace(/<br\s*\/?\s*>/gi, "\n").replace(/<[^>]+>/g, "")),
+      copyright: clean(data.lyrics_copyright || "Lyrics powered by JioSaavn")
+    };
   }
 
   getArtwork(song) {
@@ -250,6 +273,7 @@ class JioSaavnProvider extends MusicProvider {
       duration: Number(raw.duration || raw.length / 1000 || 0),
       artwork: bestMedia(raw.image || raw.image_url || raw.song_image),
       streamUrl: bestMedia(downloadUrl) || raw.media_url || raw.url || "",
+      streamVariants: Array.isArray(downloadUrl) ? downloadUrl.map((item) => ({ quality: item.quality, url: String(item.url || "").replace(/^http:/, "https:") })).filter((item) => item.url) : [],
       rawProvider: "jiosaavn-compatible",
       moods: inferMoods(`${raw.name || raw.title || ""} ${raw.album?.name || raw.album || ""}`),
       nightDrive: 0.8,
