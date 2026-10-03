@@ -137,6 +137,11 @@ class JioSaavnProvider extends MusicProvider {
     const nativeSongs = nativeDetails
       .filter((result) => result.status === "fulfilled")
       .map((result) => result.value);
+    const lyricQuery = lyricFallbackQuery(query);
+    if (compatibleSongs.length < 5 && lyricQuery && canonical(lyricQuery) !== canonical(query)) {
+      const lyricMatches = await this.searchSongs({ query: lyricQuery, language, limit });
+      compatibleSongs = uniqueSongs([...compatibleSongs, ...lyricMatches]);
+    }
     const suggestedArtist = closestArtist(query, [...nativeSongs, ...compatibleSongs]);
     if (!(autocomplete?.playlists?.data || []).length && suggestedArtist) {
       autocompleteUrl.searchParams.set("query", suggestedArtist);
@@ -311,6 +316,14 @@ function bestArtwork(value) {
 
 function normalizeQuery(value) {
   return String(value || "").replace(/[^\p{L}\p{N}\s'-]/gu, " ").replace(/\s+/g, " ").trim();
+}
+
+function lyricFallbackQuery(value) {
+  const words = normalizeQuery(value).split(" ").filter(Boolean);
+  if (words.length < 4) return "";
+  const stopWords = new Set(["hai", "hain", "ho", "ke", "ki", "ka", "ko", "se", "mein", "me", "main", "aur", "the", "a", "an", "is", "to", "of", "in", "my", "your"]);
+  const useful = words.filter((word) => !stopWords.has(word.toLowerCase()));
+  return (useful.length >= 3 ? useful : words).slice(0, 6).join(" ");
 }
 
 function closestArtist(query, songs) {

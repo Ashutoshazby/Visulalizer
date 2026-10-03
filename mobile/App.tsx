@@ -28,6 +28,7 @@ export default function App() {
   const profileMenuRef = useRef(false);
   const shuffleRef = useRef(false);
   const repeatRef = useRef<RepeatMode>("off");
+  const searchRequestRef = useRef(0);
   const waveMotion = useRef(new Animated.Value(0)).current;
   const { width } = useWindowDimensions();
   const compactLayout = width < 420;
@@ -58,6 +59,25 @@ export default function App() {
   useEffect(() => { repeatRef.current = repeatMode; }, [repeatMode]);
   useEffect(() => { currentSongRef.current = currentSong; }, [currentSong]);
   useEffect(() => { playbackPlayingRef.current = playback.playing; }, [playback.playing]);
+
+  useEffect(() => {
+    const cleanQuery = query.trim();
+    if (cleanQuery.length < 3 || activeTab !== "home") return;
+    const requestId = ++searchRequestRef.current;
+    const timer = setTimeout(async () => {
+      try {
+        const result = await fetchCatalog(cleanQuery, 12);
+        if (requestId !== searchRequestRef.current) return;
+        queueRef.current = result.songs;
+        setSongs(result.songs);
+        setPlaylists(result.playlists);
+        setMessage(result.songs.length || result.playlists.length ? "Suggestions" : "Keep typing, or try a lyric line.");
+      } catch {
+        // Silent autocomplete failures should not interrupt playback or typing.
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [activeTab, query]);
 
   const persistProfile = useCallback(async (name: string) => {
     const safeName = name.trim();
@@ -297,12 +317,12 @@ export default function App() {
     Keyboard.dismiss();
     setLoading(true);
     setMessage("Searching...");
+    const requestId = ++searchRequestRef.current;
     try {
-      const response = await fetch(`${API_BASE}/api/music/search?query=${encodeURIComponent(cleanQuery)}&language=auto&limit=24`);
-      const json = await response.json().catch(() => ({}));
-      if (!response.ok || json.ok === false) throw new Error(json.error || `Music service returned ${response.status}`);
-      const nextSongs = Array.isArray(json.songs) ? json.songs : [];
-      const nextPlaylists = Array.isArray(json.playlists) ? json.playlists : [];
+      const result = await fetchCatalog(cleanQuery, 24);
+      if (requestId !== searchRequestRef.current) return;
+      const nextSongs = result.songs;
+      const nextPlaylists = result.playlists;
       queueRef.current = nextSongs;
       setSongs(nextSongs);
       setPlaylists(nextPlaylists);
@@ -594,6 +614,16 @@ async function fetchSongs(path: string): Promise<Song[]> {
   const json = await response.json().catch(() => ({}));
   if (!response.ok || json.ok === false) throw new Error(json.error || `Music service returned ${response.status}`);
   return json.songs || [];
+}
+
+async function fetchCatalog(query: string, limit: number): Promise<{ songs: Song[]; playlists: Playlist[] }> {
+  const response = await fetch(`${API_BASE}/api/music/search?query=${encodeURIComponent(query)}&language=auto&limit=${limit}`);
+  const json = await response.json().catch(() => ({}));
+  if (!response.ok || json.ok === false) throw new Error(json.error || `Music service returned ${response.status}`);
+  return {
+    songs: Array.isArray(json.songs) ? json.songs : [],
+    playlists: Array.isArray(json.playlists) ? json.playlists : []
+  };
 }
 
 function streamUrl(id: string) { return `${API_BASE}/api/music/stream?id=${encodeURIComponent(id)}`; }

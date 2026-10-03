@@ -232,7 +232,7 @@ async function cacheJson(request, payload, maxAge) {
 
 function cacheKey(request) {
   const url = new URL(request.url);
-  url.searchParams.set("_cache", "v2");
+  url.searchParams.set("_cache", "v3");
   return new Request(url, request);
 }
 
