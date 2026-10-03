@@ -54,6 +54,14 @@ export default {
         if (cached) return withCors(cached);
         return cacheJson(request, { ok: true, ...(await provider.getLyrics(id)) }, 86400);
       }
+      if (url.pathname === "/api/music/related" && request.method === "GET") {
+        const id = String(url.searchParams.get("id") || "").trim();
+        if (!id) return json({ ok: false, error: "Missing song id." }, 400);
+        const cached = await caches.default.match(cacheKey(request));
+        if (cached) return withCors(cached);
+        const songs = await provider.getRelatedSongs(id, boundedNumber(url.searchParams.get("limit"), 18, 1, 30));
+        return cacheJson(request, { ok: true, songs }, 900);
+      }
       if (url.pathname === "/api/music/recommendations" && request.method === "GET") {
         const cached = await caches.default.match(cacheKey(request));
         if (cached) return withCors(cached);
@@ -288,7 +296,7 @@ async function cacheJson(request, payload, maxAge) {
 
 function cacheKey(request) {
   const url = new URL(request.url);
-  url.searchParams.set("_cache", "v4");
+  url.searchParams.set("_cache", "v5");
   return new Request(url, request);
 }
 

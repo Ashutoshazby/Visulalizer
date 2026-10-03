@@ -225,6 +225,21 @@ class JioSaavnProvider extends MusicProvider {
     };
   }
 
+  async getRelatedSongs(id, limit = 18) {
+    if (!id) throw new Error("Missing song id.");
+    const url = new URL("https://www.jiosaavn.com/api.php");
+    url.searchParams.set("__call", "reco.getreco");
+    url.searchParams.set("_format", "json");
+    url.searchParams.set("_marker", "0");
+    url.searchParams.set("pid", id);
+    const data = await this.fetchJson(url);
+    const rawSongs = Array.isArray(data?.[id]) ? data[id] : [];
+    return uniqueSongs(rawSongs.map((raw) => {
+      raw.media_url = decryptMediaUrl(raw.encrypted_media_url, raw["320kbps"] === "true") || raw.media_preview_url || raw.vlink;
+      return this.normalizeSong(raw);
+    }).filter((song) => song.id && song.id !== id && song.streamUrl && isRecommendationSafe(song))).slice(0, limit);
+  }
+
   getArtwork(song) {
     return song?.artwork || "";
   }

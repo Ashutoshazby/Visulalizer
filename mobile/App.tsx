@@ -35,6 +35,7 @@ export default function App() {
   const nowPlayingRef = useRef(false);
   const swipeStartRef = useRef(0);
   const lyricsRequestRef = useRef(0);
+  const relatedRequestRef = useRef(0);
   const waveMotion = useRef(new Animated.Value(0)).current;
   const { width } = useWindowDimensions();
   const compactLayout = width < 420;
@@ -68,6 +69,7 @@ export default function App() {
   const [sleepEndsAt, setSleepEndsAt] = useState<number | null>(null);
   const [sleepRemainingMs, setSleepRemainingMs] = useState(0);
   const [playerStateReady, setPlayerStateReady] = useState(false);
+  const [, setQueueRevision] = useState(0);
 
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
   useEffect(() => { selectedUserRef.current = selectedUser; }, [selectedUser]);
@@ -333,6 +335,7 @@ export default function App() {
     finishedSongRef.current = null;
     resumeRequestedRef.current = true;
     setCurrentSong(song);
+    currentSongRef.current = song;
     setRecentSongs((items) => [song, ...items.filter((item) => item.id !== song.id)].slice(0, 30));
     setMessage("");
     player.replace(streamUrl(song.id, quality));
@@ -343,6 +346,16 @@ export default function App() {
       artworkUrl: song.artwork,
     });
     player.play();
+    const requestId = ++relatedRequestRef.current;
+    fetchSongs(`/api/music/related?id=${encodeURIComponent(song.id)}&limit=18`).then((related) => {
+      if (requestId !== relatedRequestRef.current || currentSongRef.current?.id !== song.id) return;
+      const immediateNext = queue.slice(Math.max(0, index + 1), Math.max(0, index + 4));
+      const seen = new Set([song.id]);
+      const upNext = [...immediateNext, ...related].filter((item) => item.id && !seen.has(item.id) && seen.add(item.id));
+      queueRef.current = [song, ...upNext];
+      indexRef.current = 0;
+      setQueueRevision((value) => value + 1);
+    }).catch((error) => console.warn("Related songs failed", { songId: song.id, error }));
   }, [player, quality]);
 
   const playAt = useCallback((index: number) => {
@@ -514,6 +527,7 @@ export default function App() {
     if (existing >= 0) queue.splice(existing, 1);
     queue.splice(Math.max(0, indexRef.current + 1), 0, song);
     queueRef.current = queue;
+    setQueueRevision((value) => value + 1);
     Alert.alert("Queued", `${song.title} will play next.`);
   }
 
@@ -645,7 +659,7 @@ export default function App() {
         <Pressable style={styles.menuButton} onPress={() => setShowProfileMenu(true)}><Text style={styles.menuButtonText}>...</Text></Pressable>
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.profileList}>
+      <ScrollView horizontal style={styles.profileScroller} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.profileList}>
         {libraryUsers.map((profile) => (
           <Pressable key={profile} style={[styles.profilePill, selectedUser === profile && styles.profilePillActive]} onPress={() => switchProfile(profile)}>
             <Text style={styles.profilePillText}>{profile}</Text>
@@ -653,9 +667,9 @@ export default function App() {
         ))}
       </ScrollView>
 
-      <Text style={styles.libraryMessage}>{libraryMessage}</Text>
+      {librarySongs.length ? <Text style={styles.libraryMessage}>{libraryMessage}</Text> : <View style={styles.emptyLibraryRow}><View style={styles.emptyLibraryIcon}><Ionicons name="heart-outline" size={20} color="#f3a675" /></View><View><Text style={styles.emptyLibraryTitle}>No favorites yet</Text><Text style={styles.emptyLibraryText}>Saved songs for this profile will appear here.</Text></View></View>}
       {recentSongs.length ? <View style={styles.libraryShelf}><Text style={styles.shelfTitle}>Recently played</Text><ScrollView horizontal showsHorizontalScrollIndicator={false}>{recentSongs.slice(0, 10).map((song) => <Pressable key={song.id} style={styles.shelfCard} onPress={() => playSong(song, recentSongs)} onLongPress={() => showSongMenu(song)}>{song.artwork ? <Image source={{ uri: song.artwork }} style={styles.shelfArt} /> : <View style={styles.shelfArt} />}<Text style={styles.shelfSong} numberOfLines={1}>{song.title}</Text></Pressable>)}</ScrollView></View> : null}
-      <View style={styles.libraryShelf}><Text style={styles.shelfTitle}>{selectedUser ? `${selectedUser}'s shared playlist` : "Shared playlist"}</Text>{myPlaylist.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false}>{myPlaylist.slice(0, 20).map((song) => <Pressable key={song.id} style={styles.shelfCard} onPress={() => playSong(song, myPlaylist)} onLongPress={() => void removeFromSharedPlaylist(song)}>{song.artwork ? <Image source={{ uri: song.artwork }} style={styles.shelfArt} /> : <View style={styles.shelfArt} />}<Text style={styles.shelfSong} numberOfLines={1}>{song.title}</Text></Pressable>)}</ScrollView> : <Text style={styles.libraryMessage}>No songs in this shared playlist yet.</Text>}</View>
+      <View style={styles.libraryShelf}><Text style={styles.shelfTitle}>{selectedUser ? `${selectedUser}'s shared playlist` : "Shared playlist"}</Text>{myPlaylist.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false}>{myPlaylist.slice(0, 20).map((song) => <Pressable key={song.id} style={styles.shelfCard} onPress={() => playSong(song, myPlaylist)} onLongPress={() => void removeFromSharedPlaylist(song)}>{song.artwork ? <Image source={{ uri: song.artwork }} style={styles.shelfArt} /> : <View style={styles.shelfArt} />}<Text style={styles.shelfSong} numberOfLines={1}>{song.title}</Text></Pressable>)}</ScrollView> : <View style={styles.emptyLibraryRow}><View style={styles.emptyLibraryIcon}><Ionicons name="musical-notes-outline" size={20} color="#70ddef" /></View><View><Text style={styles.emptyLibraryTitle}>Playlist is empty</Text><Text style={styles.emptyLibraryText}>Long-press any song and add it here.</Text></View></View>}</View>
 
       <FlatList
         data={librarySongs}
@@ -787,7 +801,7 @@ export default function App() {
             </View>
             <View style={styles.toolRow}><Pressable style={styles.toolButton} onPress={chooseSleepTimer}><Ionicons name="moon-outline" size={19} color={sleepEndsAt ? "#70ddef" : "#b8c5c9"} /><Text style={styles.toolText}>{sleepEndsAt ? formatRemaining(sleepRemainingMs) : "Sleep"}</Text></Pressable><Pressable style={styles.toolButton} onPress={cycleQuality}><Ionicons name="options-outline" size={19} color="#b8c5c9" /><Text style={styles.toolText}>{quality}</Text></Pressable><Pressable style={styles.toolButton} onPress={() => setPlayerPanel("queue")}><Ionicons name="list" size={20} color="#b8c5c9" /><Text style={styles.toolText}>Queue</Text></Pressable></View>
             <View style={styles.panelTabs}><Pressable style={[styles.panelTab, playerPanel === "lyrics" && styles.panelTabActive]} onPress={() => setPlayerPanel("lyrics")}><Text style={styles.panelTabText}>Lyrics</Text></Pressable><Pressable style={[styles.panelTab, playerPanel === "queue" && styles.panelTabActive]} onPress={() => setPlayerPanel("queue")}><Text style={styles.panelTabText}>Up next</Text></Pressable></View>
-            {playerPanel === "lyrics" ? <ScrollView style={styles.panelBody} contentContainerStyle={styles.lyricsBody}>{lyricsLoading ? <ActivityIndicator color="#70ddef" /> : <Text style={styles.lyricsText}>{lyrics || "Lyrics are not available for this song."}</Text>}{lyricsCredit ? <Text style={styles.lyricsCredit}>{lyricsCredit}</Text> : null}</ScrollView> : <ScrollView style={styles.panelBody}>{queueRef.current.map((song, index) => <Pressable key={`${song.id}-${index}`} style={[styles.queueRow, index === indexRef.current && styles.queueRowActive]} onPress={() => playAt(index)}><Text style={styles.queueIndex}>{index === indexRef.current ? "•" : index + 1}</Text><View style={styles.songCopy}><Text style={styles.songTitle} numberOfLines={1}>{song.title}</Text><Text style={styles.songArtist} numberOfLines={1}>{song.artist}</Text></View><Pressable onPress={(event) => { event.stopPropagation(); const queue = [...queueRef.current]; queue.splice(index, 1); queueRef.current = queue; }}><Ionicons name="close" size={19} color="#839197" /></Pressable></Pressable>)}</ScrollView>}
+            {playerPanel === "lyrics" ? <ScrollView style={styles.panelBody} contentContainerStyle={styles.lyricsBody}>{lyricsLoading ? <ActivityIndicator color="#70ddef" /> : <Text style={styles.lyricsText}>{lyrics || "Lyrics are not available for this song."}</Text>}{lyricsCredit ? <Text style={styles.lyricsCredit}>{lyricsCredit}</Text> : null}</ScrollView> : <ScrollView style={styles.panelBody}>{queueRef.current.map((song, index) => <Pressable key={`${song.id}-${index}`} style={[styles.queueRow, index === indexRef.current && styles.queueRowActive]} onPress={() => playAt(index)}><Text style={styles.queueIndex}>{index === indexRef.current ? "•" : index + 1}</Text><View style={styles.songCopy}><Text style={styles.songTitle} numberOfLines={1}>{song.title}</Text><Text style={styles.songArtist} numberOfLines={1}>{song.artist}</Text></View><Pressable onPress={(event) => { event.stopPropagation(); const queue = [...queueRef.current]; queue.splice(index, 1); queueRef.current = queue; setQueueRevision((value) => value + 1); }}><Ionicons name="close" size={19} color="#839197" /></Pressable></Pressable>)}</ScrollView>}
           </View>
         ) : null}
       </SafeAreaView>
@@ -829,7 +843,7 @@ function formatRemaining(milliseconds: number) {
 const styles = StyleSheet.create({
   appRoot: { flex: 1, backgroundColor: "#030303" },
   background: { flex: 1, backgroundColor: "#071014" },
-  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: "rgba(4, 10, 13, 0.54)" },
+  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: "rgba(4, 10, 13, 0.68)" },
   safeArea: { flex: 1 },
   nativeWave: { position: "absolute", left: -40, right: -40, height: 80, borderTopWidth: 2, borderColor: "rgba(231, 249, 246, 0.34)", borderRadius: 200 },
   nativeWaveFar: { bottom: 250, opacity: 0.5 },
@@ -907,18 +921,23 @@ const styles = StyleSheet.create({
   playButton: { width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center", backgroundColor: "#f3a675" },
   playButtonCompact: { width: 48, height: 48, borderRadius: 24 },
   playIconOffset: { marginLeft: 3 },
-  libraryWrap: { flex: 1, paddingHorizontal: 16, paddingTop: 8 },
+  libraryWrap: { flex: 1, paddingHorizontal: 16, paddingTop: 8, backgroundColor: "rgba(3, 9, 12, 0.42)" },
   libraryHeader: { paddingHorizontal: 6, marginBottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   libraryTitle: { color: "#f7f3ee", fontSize: 28, fontWeight: "900" },
   libraryMeta: { color: "#d1dfe4", fontSize: 12, marginTop: 4 },
   libraryMessage: { color: "#c9dbe0", fontSize: 12, marginBottom: 8, paddingHorizontal: 4 },
+  emptyLibraryRow: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 6, marginBottom: 12 },
+  emptyLibraryIcon: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(8,18,21,0.88)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" },
+  emptyLibraryTitle: { color: "#edf3f5", fontSize: 13, fontWeight: "800" },
+  emptyLibraryText: { color: "#8d9ba1", fontSize: 11, marginTop: 3 },
   libraryShelf: { marginBottom: 12 },
   shelfTitle: { color: "#f3f7f8", fontSize: 14, fontWeight: "900", marginBottom: 8, paddingHorizontal: 4 },
   shelfCard: { width: 92, marginRight: 10 },
   shelfArt: { width: 92, height: 92, borderRadius: 7, backgroundColor: "#111b1f" },
   shelfSong: { color: "#dfe8eb", fontSize: 11, fontWeight: "700", marginTop: 5 },
-  profileList: { paddingVertical: 8, paddingHorizontal: 4 },
-  profilePill: { paddingHorizontal: 12, paddingVertical: 8, marginRight: 8, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", backgroundColor: "rgba(7,13,15,0.5)" },
+  profileScroller: { flexGrow: 0, maxHeight: 54, marginBottom: 4 },
+  profileList: { height: 50, alignItems: "center", paddingHorizontal: 4 },
+  profilePill: { height: 38, justifyContent: "center", paddingHorizontal: 15, marginRight: 8, borderRadius: 19, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", backgroundColor: "rgba(7,13,15,0.82)" },
   profilePillActive: { backgroundColor: "rgba(255,146,91,0.26)", borderColor: "rgba(255,146,91,0.8)" },
   profilePillText: { color: "#f5f8fa", fontSize: 11, fontWeight: "700" },
   menuButton: { width: 38, height: 38, borderRadius: 7, borderWidth: 1, borderColor: "rgba(255,255,255,0.16)", alignItems: "center", justifyContent: "center", backgroundColor: "rgba(7,13,15,0.62)" },
