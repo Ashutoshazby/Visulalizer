@@ -1,4 +1,5 @@
 import * as FileSystem from "expo-file-system/legacy";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Easing, FlatList, Image, ImageBackground, Keyboard, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
@@ -534,7 +535,7 @@ export default function App() {
             {currentSong?.artwork ? <Image source={{ uri: currentSong.artwork }} style={styles.playerArtwork} /> : <View style={styles.playerArtwork} />}
             <View style={styles.playerCopy}><Text style={styles.playerTitle} numberOfLines={1}>{currentSong?.title || "Choose a song"}</Text><Text style={styles.playerArtist} numberOfLines={1}>{currentSong?.artist || "Ready when you are"}</Text></View>
             <Pressable style={styles.saveButton} onPress={() => saveSongToLibrary(currentSong)}>
-              <Text style={styles.saveButtonText}>SAVE</Text>
+              <Ionicons name="heart-outline" size={18} color="#ffd5ba" />
             </Pressable>
             {playback.isBuffering ? <ActivityIndicator color="#70ddef" /> : null}
           </View>
@@ -543,11 +544,22 @@ export default function App() {
           </Pressable>
           <View style={styles.times}><Text style={styles.time}>{formatTime(playback.currentTime)}</Text><Text style={styles.time}>{formatTime(playback.duration)}</Text></View>
           <View style={styles.controls}>
-            <Pressable style={[styles.modeButton, shuffleEnabled && styles.modeButtonActive]} onPress={() => setShuffleEnabled((value) => !value)}><Text style={styles.modeText}>SHUF</Text></Pressable>
-            <Pressable style={[styles.controlButton, compactLayout && styles.controlButtonCompact]} onPress={() => changeTrack(-1)}><Text style={styles.controlText}>|&lt;</Text></Pressable>
-            <Pressable style={[styles.playButton, compactLayout && styles.playButtonCompact]} onPress={togglePlayback}><Text style={styles.playText}>{playback.playing ? "II" : ">"}</Text></Pressable>
-            <Pressable style={[styles.controlButton, compactLayout && styles.controlButtonCompact]} onPress={() => changeTrack(1)}><Text style={styles.controlText}>&gt;|</Text></Pressable>
-            <Pressable style={[styles.modeButton, repeatMode !== "off" && styles.modeButtonActive]} onPress={cycleRepeat}><Text style={styles.modeText}>{repeatMode === "one" ? "RPT 1" : "RPT"}</Text></Pressable>
+            <Pressable accessibilityLabel="Shuffle" style={[styles.modeButton, shuffleEnabled && styles.modeButtonActive]} onPress={() => setShuffleEnabled((value) => !value)}>
+              <Ionicons name="shuffle" size={21} color={shuffleEnabled ? "#70ddef" : "#87969c"} />
+            </Pressable>
+            <Pressable accessibilityLabel="Previous song" style={[styles.controlButton, compactLayout && styles.controlButtonCompact]} onPress={() => changeTrack(-1)}>
+              <Ionicons name="play-skip-back" size={20} color="#e8f0f2" />
+            </Pressable>
+            <Pressable accessibilityLabel={playback.playing ? "Pause" : "Play"} style={[styles.playButton, compactLayout && styles.playButtonCompact]} onPress={togglePlayback}>
+              <Ionicons name={playback.playing ? "pause" : "play"} size={27} color="#1c0d08" style={!playback.playing ? styles.playIconOffset : undefined} />
+            </Pressable>
+            <Pressable accessibilityLabel="Next song" style={[styles.controlButton, compactLayout && styles.controlButtonCompact]} onPress={() => changeTrack(1)}>
+              <Ionicons name="play-skip-forward" size={20} color="#e8f0f2" />
+            </Pressable>
+            <Pressable accessibilityLabel="Repeat" style={[styles.modeButton, repeatMode !== "off" && styles.modeButtonActive]} onPress={cycleRepeat}>
+              <Ionicons name={repeatMode === "one" ? "repeat" : "repeat-outline"} size={21} color={repeatMode !== "off" ? "#70ddef" : "#87969c"} />
+              {repeatMode === "one" ? <Text style={styles.repeatOne}>1</Text> : null}
+            </Pressable>
           </View>
         </View>
 
@@ -688,30 +700,28 @@ const styles = StyleSheet.create({
   rowAction: { width: 30, color: "#70ddef", fontSize: 13, textAlign: "center" },
   removeButton: { width: 28, height: 28, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: "rgba(255,255,255,0.05)" },
   removeButtonText: { color: "#a9b7bc", fontSize: 10, fontWeight: "900" },
-  player: { position: "absolute", left: 10, right: 10, bottom: 8, padding: 13, borderWidth: 1, borderColor: "rgba(255, 221, 198, 0.25)", borderRadius: 8, backgroundColor: "rgba(7, 14, 16, 0.92)" },
+  player: { position: "absolute", left: 10, right: 10, bottom: 8, padding: 14, borderWidth: 1, borderColor: "rgba(255, 221, 198, 0.28)", borderRadius: 8, backgroundColor: "#081014", shadowColor: "#000", shadowOpacity: 0.42, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 16 },
   playerCompact: { left: 8, right: 8, bottom: 6, padding: 11 },
   nowPlaying: { flexDirection: "row", alignItems: "center", gap: 11 },
   playerArtwork: { width: 54, height: 54, borderRadius: 7, backgroundColor: "#121b1f" },
   playerCopy: { flex: 1, minWidth: 0 },
   playerTitle: { color: "#f5f8fa", fontSize: 15, fontWeight: "800" },
   playerArtist: { color: "#8f9ea4", fontSize: 12, marginTop: 3 },
-  saveButton: { borderRadius: 6, backgroundColor: "rgba(255,172,124,0.2)", borderWidth: 1, borderColor: "rgba(255,172,124,0.7)", paddingHorizontal: 10, paddingVertical: 8 },
-  saveButtonText: { color: "#f4d1b7", fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  saveButton: { width: 42, height: 42, borderRadius: 21, backgroundColor: "rgba(255,172,124,0.15)", borderWidth: 1, borderColor: "rgba(255,172,124,0.55)", alignItems: "center", justifyContent: "center" },
   progressHit: { paddingVertical: 10 },
   progressTrack: { height: 3, borderRadius: 2, backgroundColor: "#273238", overflow: "hidden" },
   progressLive: { height: "100%", backgroundColor: "#f3a675" },
   times: { flexDirection: "row", justifyContent: "space-between", marginTop: -5 },
   time: { color: "#77868c", fontSize: 10, fontVariant: ["tabular-nums"] },
-  controls: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 7, marginTop: 3 },
-  controlButton: { width: 42, height: 40, borderWidth: 1, borderColor: "#2b393f", borderRadius: 7, alignItems: "center", justifyContent: "center" },
+  controls: { flexDirection: "row", alignItems: "center", justifyContent: "space-around", gap: 7, marginTop: 4 },
+  controlButton: { width: 44, height: 44, borderWidth: 1, borderColor: "#2b393f", borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: "#0c171b" },
   controlButtonCompact: { width: 38 },
-  controlText: { color: "#dbe5e8", fontSize: 12, fontWeight: "800" },
-  modeButton: { width: 43, height: 36, alignItems: "center", justifyContent: "center", borderRadius: 7 },
-  modeButtonActive: { backgroundColor: "rgba(112,221,239,0.14)" },
-  modeText: { color: "#87969c", fontSize: 9, fontWeight: "900" },
+  modeButton: { width: 40, height: 40, alignItems: "center", justifyContent: "center", borderRadius: 20, position: "relative" },
+  modeButtonActive: { backgroundColor: "rgba(112,221,239,0.13)" },
+  repeatOne: { position: "absolute", right: 5, bottom: 4, color: "#70ddef", fontSize: 8, fontWeight: "900" },
   playButton: { width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center", backgroundColor: "#f3a675" },
   playButtonCompact: { width: 48, height: 48, borderRadius: 24 },
-  playText: { color: "#1c0d08", fontSize: 17, fontWeight: "900" },
+  playIconOffset: { marginLeft: 3 },
   libraryWrap: { flex: 1, paddingHorizontal: 16, paddingTop: 8 },
   libraryHeader: { paddingHorizontal: 6, marginBottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   libraryTitle: { color: "#f7f3ee", fontSize: 28, fontWeight: "900" },
