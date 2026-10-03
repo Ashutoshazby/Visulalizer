@@ -296,7 +296,7 @@ async function cacheJson(request, payload, maxAge) {
 
 function cacheKey(request) {
   const url = new URL(request.url);
-  url.searchParams.set("_cache", "v5");
+  url.searchParams.set("_cache", "v6");
   return new Request(url, request);
 }
 

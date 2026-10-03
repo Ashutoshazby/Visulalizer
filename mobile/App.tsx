@@ -70,6 +70,8 @@ export default function App() {
   const [sleepRemainingMs, setSleepRemainingMs] = useState(0);
   const [playerStateReady, setPlayerStateReady] = useState(false);
   const [, setQueueRevision] = useState(0);
+  const [toast, setToast] = useState("");
+  const favoriteIds = new Set(librarySongs.map((song) => song.id));
 
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
   useEffect(() => { selectedUserRef.current = selectedUser; }, [selectedUser]);
@@ -80,6 +82,11 @@ export default function App() {
   useEffect(() => { currentSongRef.current = currentSong; }, [currentSong]);
   useEffect(() => { playbackPlayingRef.current = playback.playing; }, [playback.playing]);
   useEffect(() => { nowPlayingRef.current = showNowPlaying; }, [showNowPlaying]);
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(""), 2200);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   useEffect(() => {
     FileSystem.readAsStringAsync(PLAYER_STATE_FILE).then((text) => {
@@ -255,7 +262,7 @@ export default function App() {
       await refreshLibraryUsers();
       await fetchLibraryForUser(safeUser);
       setLibraryMessage(`${safeUser}'s favorite songs updated.`);
-      Alert.alert("Saved", `${song.title} added to ${safeUser}'s favorite songs.`);
+      setToast(`Added to ${safeUser}'s favorites`);
     } catch (error) {
       Alert.alert("Save failed", error instanceof Error ? error.message : "Could not save favorite song.");
     }
@@ -511,11 +518,18 @@ export default function App() {
       if (!response.ok || json.ok === false) throw new Error(json.error || "Could not remove favorite.");
       setLibrarySongs(Array.isArray(json.songs) ? json.songs : []);
       setLibraryMessage(json.songs?.length ? `${selectedUser}'s favorite songs` : "No favorites yet for this profile.");
+      setToast("Removed from favorites");
       await refreshLibraryUsers();
     } catch (error) {
       Alert.alert("Remove failed", error instanceof Error ? error.message : "Could not remove favorite.");
     }
   }, [refreshLibraryUsers, selectedUser]);
+
+  async function toggleFavorite(song: Song | null) {
+    if (!song) return;
+    if (favoriteIds.has(song.id)) await removeSongFromLibrary(song);
+    else await saveSongToLibrary(song);
+  }
 
   function cycleRepeat() {
     setRepeatMode((current) => current === "off" ? "all" : current === "all" ? "one" : "off");
@@ -642,6 +656,7 @@ export default function App() {
           <Pressable style={[styles.songRow, item.id === currentSong?.id && styles.songRowActive]} onPress={() => playSong(item, songs)} onLongPress={() => showSongMenu(item)}>
             {item.artwork ? <Image source={{ uri: item.artwork }} style={styles.thumb} /> : <View style={styles.thumbFallback}><Text style={styles.note}>♪</Text></View>}
             <View style={styles.songCopy}><Text style={styles.songTitle} numberOfLines={1}>{item.title}</Text><Text style={styles.songArtist} numberOfLines={1}>{item.artist || item.album || "Unknown artist"}</Text></View>
+            <Pressable style={styles.rowHeart} onPress={(event) => { event.stopPropagation(); void toggleFavorite(item); }}><Ionicons name={favoriteIds.has(item.id) ? "heart" : "heart-outline"} size={19} color={favoriteIds.has(item.id) ? "#58d68d" : "#718188"} /></Pressable>
             <Ionicons name={item.id === currentSong?.id && playback.playing ? "pause" : "play"} size={17} color="#70ddef" style={styles.rowAction} />
           </Pressable>
         )}
@@ -680,7 +695,7 @@ export default function App() {
           <Pressable style={[styles.songRow, item.id === currentSong?.id && styles.songRowActive]} onPress={() => playSong(item, librarySongs)} onLongPress={() => showSongMenu(item)}>
             {item.artwork ? <Image source={{ uri: item.artwork }} style={styles.thumb} /> : <View style={styles.thumbFallback}><Text style={styles.note}>♪</Text></View>}
             <View style={styles.songCopy}><Text style={styles.songTitle} numberOfLines={1}>{item.title}</Text><Text style={styles.songArtist} numberOfLines={1}>{item.artist || item.album || "Unknown artist"}</Text></View>
-            <Pressable style={styles.removeButton} onPress={(event) => { event.stopPropagation(); void removeSongFromLibrary(item); }}><Text style={styles.removeButtonText}>X</Text></Pressable>
+            <Pressable style={styles.rowHeart} onPress={(event) => { event.stopPropagation(); void toggleFavorite(item); }}><Ionicons name="heart" size={19} color="#58d68d" /></Pressable>
             <Ionicons name={item.id === currentSong?.id && playback.playing ? "pause" : "play"} size={17} color="#70ddef" style={styles.rowAction} />
           </Pressable>
         )}
@@ -704,8 +719,8 @@ export default function App() {
           <Pressable style={styles.nowPlaying} onPress={openNowPlaying}>
             {currentSong?.artwork ? <Image source={{ uri: currentSong.artwork }} style={styles.playerArtwork} /> : <View style={styles.playerArtwork} />}
             <View style={styles.playerCopy}><Text style={styles.playerTitle} numberOfLines={1}>{currentSong?.title || "Choose a song"}</Text><Text style={styles.playerArtist} numberOfLines={1}>{currentSong?.artist || "Ready when you are"}</Text></View>
-            <Pressable style={styles.saveButton} onPress={(event) => { event.stopPropagation(); void saveSongToLibrary(currentSong); }}>
-              <Ionicons name="heart-outline" size={18} color="#ffd5ba" />
+            <Pressable style={[styles.saveButton, currentSong && favoriteIds.has(currentSong.id) && styles.saveButtonActive]} onPress={(event) => { event.stopPropagation(); void toggleFavorite(currentSong); }}>
+              <Ionicons name={currentSong && favoriteIds.has(currentSong.id) ? "heart" : "heart-outline"} size={19} color={currentSong && favoriteIds.has(currentSong.id) ? "#58d68d" : "#ffd5ba"} />
             </Pressable>
             {playback.isBuffering ? <ActivityIndicator color="#70ddef" /> : null}
           </Pressable>
@@ -793,7 +808,7 @@ export default function App() {
             <View onTouchStart={(event) => { swipeStartRef.current = event.nativeEvent.pageX; }} onTouchEnd={(event) => { const distance = event.nativeEvent.pageX - swipeStartRef.current; if (Math.abs(distance) > 55) changeTrack(distance < 0 ? 1 : -1); }}>
               {currentSong?.artwork ? <Image source={{ uri: currentSong.artwork }} style={styles.fullArtwork} /> : <View style={styles.fullArtwork} />}
             </View>
-            <View style={styles.fullSongRow}><View style={styles.fullSongCopy}><Text style={styles.fullTitle} numberOfLines={1}>{currentSong?.title || "Choose a song"}</Text><Text style={styles.fullArtist} numberOfLines={1}>{currentSong?.artist || "Ready when you are"}</Text></View><Pressable style={styles.fullIconButton} onPress={() => void saveSongToLibrary(currentSong)}><Ionicons name="heart-outline" size={25} color="#ffc6a2" /></Pressable></View>
+            <View style={styles.fullSongRow}><View style={styles.fullSongCopy}><Text style={styles.fullTitle} numberOfLines={1}>{currentSong?.title || "Choose a song"}</Text><Text style={styles.fullArtist} numberOfLines={1}>{currentSong?.artist || "Ready when you are"}</Text></View><Pressable style={styles.fullIconButton} onPress={() => void toggleFavorite(currentSong)}><Ionicons name={currentSong && favoriteIds.has(currentSong.id) ? "heart" : "heart-outline"} size={26} color={currentSong && favoriteIds.has(currentSong.id) ? "#58d68d" : "#ffc6a2"} /></Pressable></View>
             <Pressable style={styles.fullProgressHit} onLayout={(event) => { progressWidth.current = event.nativeEvent.layout.width; }} onPress={(event) => seek(event.nativeEvent.locationX)}><View style={styles.fullProgress}><View style={[styles.progressLive, { width: `${playback.duration ? Math.min(100, playback.currentTime / playback.duration * 100) : 0}%` }]} /></View></Pressable>
             <View style={styles.times}><Text style={styles.time}>{formatTime(playback.currentTime)}</Text><Text style={styles.time}>-{formatTime(Math.max(0, playback.duration - playback.currentTime))}</Text></View>
             <View style={styles.fullControls}>
@@ -804,6 +819,7 @@ export default function App() {
             {playerPanel === "lyrics" ? <ScrollView style={styles.panelBody} contentContainerStyle={styles.lyricsBody}>{lyricsLoading ? <ActivityIndicator color="#70ddef" /> : <Text style={styles.lyricsText}>{lyrics || "Lyrics are not available for this song."}</Text>}{lyricsCredit ? <Text style={styles.lyricsCredit}>{lyricsCredit}</Text> : null}</ScrollView> : <ScrollView style={styles.panelBody}>{queueRef.current.map((song, index) => <Pressable key={`${song.id}-${index}`} style={[styles.queueRow, index === indexRef.current && styles.queueRowActive]} onPress={() => playAt(index)}><Text style={styles.queueIndex}>{index === indexRef.current ? "•" : index + 1}</Text><View style={styles.songCopy}><Text style={styles.songTitle} numberOfLines={1}>{song.title}</Text><Text style={styles.songArtist} numberOfLines={1}>{song.artist}</Text></View><Pressable onPress={(event) => { event.stopPropagation(); const queue = [...queueRef.current]; queue.splice(index, 1); queueRef.current = queue; setQueueRevision((value) => value + 1); }}><Ionicons name="close" size={19} color="#839197" /></Pressable></Pressable>)}</ScrollView>}
           </View>
         ) : null}
+        {toast ? <View style={styles.toast}><Ionicons name="checkmark-circle" size={20} color="#58d68d" /><Text style={styles.toastText}>{toast}</Text></View> : null}
       </SafeAreaView>
     </ImageBackground>
     {introVisible ? <View style={styles.intro}><Image source={require("./assets/saanjh-logo.png")} style={styles.introLogo} /></View> : null}
@@ -897,6 +913,7 @@ const styles = StyleSheet.create({
   songTitle: { color: "#edf3f5", fontSize: 14, fontWeight: "700" },
   songArtist: { color: "#87969c", fontSize: 12, marginTop: 4 },
   rowAction: { width: 30, color: "#70ddef", fontSize: 13, textAlign: "center" },
+  rowHeart: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },
   removeButton: { width: 28, height: 28, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: "rgba(255,255,255,0.05)" },
   removeButtonText: { color: "#a9b7bc", fontSize: 10, fontWeight: "900" },
   player: { position: "absolute", left: 10, right: 10, bottom: 8, padding: 14, borderWidth: 1, borderColor: "rgba(255, 221, 198, 0.28)", borderRadius: 8, backgroundColor: "#081014", shadowColor: "#000", shadowOpacity: 0.42, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 16 },
@@ -907,6 +924,7 @@ const styles = StyleSheet.create({
   playerTitle: { color: "#f5f8fa", fontSize: 15, fontWeight: "800" },
   playerArtist: { color: "#8f9ea4", fontSize: 12, marginTop: 3 },
   saveButton: { width: 42, height: 42, borderRadius: 21, backgroundColor: "rgba(255,172,124,0.15)", borderWidth: 1, borderColor: "rgba(255,172,124,0.55)", alignItems: "center", justifyContent: "center" },
+  saveButtonActive: { backgroundColor: "rgba(88,214,141,0.12)", borderColor: "rgba(88,214,141,0.55)" },
   progressHit: { paddingVertical: 10 },
   progressTrack: { height: 3, borderRadius: 2, backgroundColor: "#273238", overflow: "hidden" },
   progressLive: { height: "100%", backgroundColor: "#f3a675" },
@@ -1002,4 +1020,6 @@ const styles = StyleSheet.create({
   queueRow: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 8, borderRadius: 6 },
   queueRowActive: { backgroundColor: "rgba(243,166,117,0.13)" },
   queueIndex: { width: 24, color: "#f3a675", fontSize: 12, textAlign: "center" },
+  toast: { position: "absolute", left: 20, right: 20, bottom: 178, zIndex: 50, minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9, borderRadius: 8, backgroundColor: "#101c1f", borderWidth: 1, borderColor: "rgba(88,214,141,0.3)", elevation: 20 },
+  toastText: { color: "#eef5f3", fontSize: 12, fontWeight: "800" },
 });

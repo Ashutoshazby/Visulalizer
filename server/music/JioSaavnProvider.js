@@ -227,6 +227,7 @@ class JioSaavnProvider extends MusicProvider {
 
   async getRelatedSongs(id, limit = 18) {
     if (!id) throw new Error("Missing song id.");
+    const current = await this.getSong(id);
     const url = new URL("https://www.jiosaavn.com/api.php");
     url.searchParams.set("__call", "reco.getreco");
     url.searchParams.set("_format", "json");
@@ -234,10 +235,23 @@ class JioSaavnProvider extends MusicProvider {
     url.searchParams.set("pid", id);
     const data = await this.fetchJson(url);
     const rawSongs = Array.isArray(data?.[id]) ? data[id] : [];
-    return uniqueSongs(rawSongs.map((raw) => {
+    const nativeRelated = uniqueSongs(rawSongs.map((raw) => {
       raw.media_url = decryptMediaUrl(raw.encrypted_media_url, raw["320kbps"] === "true") || raw.media_preview_url || raw.vlink;
       return this.normalizeSong(raw);
-    }).filter((song) => song.id && song.id !== id && song.streamUrl && isRecommendationSafe(song))).slice(0, limit);
+    }).filter((song) => song.id && song.id !== id && song.streamUrl && isRecommendationSafe(song)));
+    const profile = recommendationProfile(current);
+    const sameLanguage = nativeRelated.filter((song) => profile.language === "unknown" || song.language === profile.language);
+    let tailored = [];
+    if (profile.style) {
+      tailored = await this.searchSongs({
+        query: `${current.artist?.split(",")[0] || current.title} ${profile.style}`,
+        language: profile.language === "unknown" ? "auto" : profile.language,
+        limit
+      });
+    }
+    const pool = uniqueSongs([...tailored, ...sameLanguage]);
+    const styleMatches = profile.style ? pool.filter((song) => matchesRecommendationStyle(song, profile.style)) : pool;
+    return uniqueSongs([...(styleMatches.length >= 5 ? styleMatches : pool), ...sameLanguage]).slice(0, limit);
   }
 
   getArtwork(song) {
@@ -286,7 +300,7 @@ class JioSaavnProvider extends MusicProvider {
       language: String(raw.language || raw.song_language || "unknown").toLowerCase(),
       year: raw.year || "",
       duration: Number(raw.duration || raw.length / 1000 || 0),
-      artwork: bestMedia(raw.image || raw.image_url || raw.song_image),
+      artwork: bestArtwork(raw.image || raw.image_url || raw.song_image),
       streamUrl: bestMedia(downloadUrl) || raw.media_url || raw.url || "",
       streamVariants: Array.isArray(downloadUrl) ? downloadUrl.map((item) => ({ quality: item.quality, url: String(item.url || "").replace(/^http:/, "https:") })).filter((item) => item.url) : [],
       rawProvider: "jiosaavn-compatible",
@@ -350,7 +364,25 @@ function bestMedia(value) {
 }
 
 function bestArtwork(value) {
-  return String(value || "").replace(/-(50|150)x\1(?=\.[a-z]+(?:\?|$))/i, "-500x500").replace(/^http:/, "https:");
+  const source = Array.isArray(value) ? bestMedia(value) : String(value || "");
+  return source.replace(/-(50|150)x\1(?=\.[a-z]+(?:\?|$))/i, "-500x500").replace(/^http:/, "https:");
+}
+
+function recommendationProfile(song) {
+  const text = searchableSongText(song);
+  let style = "";
+  if (/\b(rap|hip hop|hip-hop|rapper|divine|emiway|raftaar|kr\$na|seedhe maut|badshah|yo yo honey|sidhu moose|ap dhillon|shubh|navaan sandhu|drake|eminem|kendrick|travis scott|post malone)\b/i.test(text)) style = "rap";
+  else if (/\b(love|romantic|pyaar|pyar|ishq|mohabbat|saathiya|jaan|dil|tera|tum hi|aashiqui)\b/i.test(text) || song.moods?.includes("romantic")) style = "romantic";
+  else if (/\b(sad|dard|bewafa|heartbreak|tanha|judai)\b/i.test(text) || song.moods?.includes("sad")) style = "sad";
+  return { language: song.language || "unknown", style };
+}
+
+function matchesRecommendationStyle(song, style) {
+  const text = searchableSongText(song);
+  if (style === "rap") return /\b(rap|hip hop|hip-hop|divine|emiway|raftaar|kr\$na|seedhe maut|badshah|honey|sidhu|ap dhillon|shubh|navaan|drake|eminem|kendrick|travis|post malone)\b/i.test(text);
+  if (style === "romantic") return song.moods?.includes("romantic") || /\b(love|romantic|pyaar|pyar|ishq|mohabbat|jaan|dil|tera|tum)\b/i.test(text);
+  if (style === "sad") return song.moods?.includes("sad") || /\b(sad|dard|bewafa|heartbreak|tanha|judai)\b/i.test(text);
+  return true;
 }
 
 function normalizeQuery(value) {
