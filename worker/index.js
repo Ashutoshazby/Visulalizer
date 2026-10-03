@@ -52,7 +52,11 @@ export default {
         if (!id) return json({ ok: false, error: "Missing song id." }, 400);
         const cached = await caches.default.match(cacheKey(request));
         if (cached) return withCors(cached);
-        return cacheJson(request, { ok: true, ...(await provider.getLyrics(id)) }, 86400);
+        return cacheJson(request, { ok: true, ...(await provider.getLyrics(
+          id,
+          url.searchParams.get("title") || "",
+          url.searchParams.get("artist") || ""
+        )) }, 86400);
       }
       if (url.pathname === "/api/music/related" && request.method === "GET") {
         const id = String(url.searchParams.get("id") || "").trim();

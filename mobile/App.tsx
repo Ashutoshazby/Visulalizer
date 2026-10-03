@@ -37,6 +37,7 @@ export default function App() {
   const lyricsRequestRef = useRef(0);
   const relatedRequestRef = useRef(0);
   const waveMotion = useRef(new Animated.Value(0)).current;
+  const fullPlayerMotion = useRef(new Animated.Value(0)).current;
   const { width } = useWindowDimensions();
   const compactLayout = width < 420;
 
@@ -72,6 +73,18 @@ export default function App() {
   const [, setQueueRevision] = useState(0);
   const [toast, setToast] = useState("");
   const favoriteIds = new Set(librarySongs.map((song) => song.id));
+
+  const closeNowPlaying = useCallback(() => {
+    nowPlayingRef.current = false;
+    Animated.timing(fullPlayerMotion, {
+      toValue: 0,
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setShowNowPlaying(false);
+    });
+  }, [fullPlayerMotion]);
 
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
   useEffect(() => { selectedUserRef.current = selectedUser; }, [selectedUser]);
@@ -136,7 +149,12 @@ export default function App() {
     setLyrics("");
     setLyricsCredit("");
     setLyricsLoading(true);
-    fetch(`${API_BASE}/api/music/lyrics?id=${encodeURIComponent(currentSong.id)}`)
+    const lyricsParams = new URLSearchParams({
+      id: currentSong.id,
+      title: currentSong.title,
+      artist: currentSong.artist || "",
+    });
+    fetch(`${API_BASE}/api/music/lyrics?${lyricsParams}`)
       .then(async (response) => ({ response, data: await response.json().catch(() => ({})) }))
       .then(({ response, data }) => {
         if (requestId !== lyricsRequestRef.current) return;
@@ -315,7 +333,7 @@ export default function App() {
   useEffect(() => {
     const exitSubscription = BackHandler.addEventListener("hardwareBackPress", () => {
       if (nowPlayingRef.current) {
-        setShowNowPlaying(false);
+        closeNowPlaying();
         return true;
       }
       if (profileMenuRef.current) {
@@ -333,7 +351,7 @@ export default function App() {
       return false;
     });
     return () => exitSubscription.remove();
-  }, []);
+  }, [closeNowPlaying]);
 
   const playSong = useCallback((song: Song, queue = queueRef.current) => {
     const index = queue.findIndex((item) => item.id === song.id);
@@ -351,6 +369,10 @@ export default function App() {
       artist: song.artist || "Saanjh Music",
       albumTitle: song.album || "Saanjh mix",
       artworkUrl: song.artwork,
+    }, {
+      showSeekBackward: true,
+      showSeekForward: true,
+      isLiveStream: false,
     });
     player.play();
     const requestId = ++relatedRequestRef.current;
@@ -582,7 +604,18 @@ export default function App() {
   }
 
   function openNowPlaying() {
+    nowPlayingRef.current = true;
+    fullPlayerMotion.setValue(0);
     setShowNowPlaying(true);
+    requestAnimationFrame(() => {
+      Animated.spring(fullPlayerMotion, {
+        toValue: 1,
+        damping: 22,
+        stiffness: 240,
+        mass: 0.85,
+        useNativeDriver: true,
+      }).start();
+    });
   }
 
   function chooseSleepTimer() {
@@ -799,9 +832,12 @@ export default function App() {
           </View>
         ) : null}
         {showNowPlaying ? (
-          <View style={styles.fullPlayer}>
+          <Animated.View style={[styles.fullPlayer, {
+            opacity: fullPlayerMotion,
+            transform: [{ translateY: fullPlayerMotion.interpolate({ inputRange: [0, 1], outputRange: [42, 0] }) }],
+          }]}>
             <View style={styles.fullPlayerHeader}>
-              <Pressable style={styles.fullIconButton} onPress={() => setShowNowPlaying(false)}><Ionicons name="chevron-down" size={25} color="#edf5f7" /></Pressable>
+              <Pressable style={styles.fullIconButton} onPress={closeNowPlaying}><Ionicons name="chevron-down" size={25} color="#edf5f7" /></Pressable>
               <View style={styles.fullHeaderCopy}><Text style={styles.fullKicker}>NOW PLAYING</Text><Text style={styles.fullAlbum} numberOfLines={1}>{currentSong?.album || "Saanjh mix"}</Text></View>
               <Pressable style={styles.fullIconButton} onPress={() => currentSong && showSongMenu(currentSong)}><Ionicons name="ellipsis-horizontal" size={23} color="#edf5f7" /></Pressable>
             </View>
@@ -817,7 +853,7 @@ export default function App() {
             <View style={styles.toolRow}><Pressable style={styles.toolButton} onPress={chooseSleepTimer}><Ionicons name="moon-outline" size={19} color={sleepEndsAt ? "#70ddef" : "#b8c5c9"} /><Text style={styles.toolText}>{sleepEndsAt ? formatRemaining(sleepRemainingMs) : "Sleep"}</Text></Pressable><Pressable style={styles.toolButton} onPress={cycleQuality}><Ionicons name="options-outline" size={19} color="#b8c5c9" /><Text style={styles.toolText}>{quality}</Text></Pressable><Pressable style={styles.toolButton} onPress={() => setPlayerPanel("queue")}><Ionicons name="list" size={20} color="#b8c5c9" /><Text style={styles.toolText}>Queue</Text></Pressable></View>
             <View style={styles.panelTabs}><Pressable style={[styles.panelTab, playerPanel === "lyrics" && styles.panelTabActive]} onPress={() => setPlayerPanel("lyrics")}><Text style={styles.panelTabText}>Lyrics</Text></Pressable><Pressable style={[styles.panelTab, playerPanel === "queue" && styles.panelTabActive]} onPress={() => setPlayerPanel("queue")}><Text style={styles.panelTabText}>Up next</Text></Pressable></View>
             {playerPanel === "lyrics" ? <ScrollView style={styles.panelBody} contentContainerStyle={styles.lyricsBody}>{lyricsLoading ? <ActivityIndicator color="#70ddef" /> : <Text style={styles.lyricsText}>{lyrics || "Lyrics are not available for this song."}</Text>}{lyricsCredit ? <Text style={styles.lyricsCredit}>{lyricsCredit}</Text> : null}</ScrollView> : <ScrollView style={styles.panelBody}>{queueRef.current.map((song, index) => <Pressable key={`${song.id}-${index}`} style={[styles.queueRow, index === indexRef.current && styles.queueRowActive]} onPress={() => playAt(index)}><Text style={styles.queueIndex}>{index === indexRef.current ? "•" : index + 1}</Text><View style={styles.songCopy}><Text style={styles.songTitle} numberOfLines={1}>{song.title}</Text><Text style={styles.songArtist} numberOfLines={1}>{song.artist}</Text></View><Pressable onPress={(event) => { event.stopPropagation(); const queue = [...queueRef.current]; queue.splice(index, 1); queueRef.current = queue; setQueueRevision((value) => value + 1); }}><Ionicons name="close" size={19} color="#839197" /></Pressable></Pressable>)}</ScrollView>}
-          </View>
+          </Animated.View>
         ) : null}
         {toast ? <View style={styles.toast}><Ionicons name="checkmark-circle" size={20} color="#58d68d" /><Text style={styles.toastText}>{toast}</Text></View> : null}
       </SafeAreaView>

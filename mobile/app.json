@@ -2,7 +2,7 @@
   "expo": {
     "name": "Saanjh Music",
     "slug": "saanjh-music",
-    "version": "2.4.0",
+    "version": "2.5.0",
     "orientation": "portrait",
     "icon": "./assets/saanjh-logo.png",
     "userInterfaceStyle": "dark",
@@ -14,14 +14,15 @@
           "enableBackgroundRecording": false,
           "recordAudioAndroid": false
         }
-      ]
+      ],
+      "./plugins/withBackToBackground"
     ],
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "package": "com.ashutosh.nightdriveradio",
-      "versionCode": 11,
+      "versionCode": 12,
       "adaptiveIcon": {
         "backgroundColor": "#07324B",
         "foregroundImage": "./assets/saanjh-logo.png"

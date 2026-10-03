@@ -210,18 +210,33 @@ class JioSaavnProvider extends MusicProvider {
     return song?.streamUrl || null;
   }
 
-  async getLyrics(id) {
+  async getLyrics(id, title = "", artist = "") {
     if (!id) throw new Error("Missing song id.");
     const url = new URL("https://www.jiosaavn.com/api.php");
     url.searchParams.set("__call", "lyrics.getLyrics");
     url.searchParams.set("_format", "json");
     url.searchParams.set("_marker", "0");
     url.searchParams.set("lyrics_id", id);
-    const data = await this.fetchJson(url);
-    if (!data?.lyrics) return { lyrics: "", copyright: "" };
+    const data = await this.fetchJson(url).catch(() => ({}));
+    if (data?.lyrics) {
+      return {
+        lyrics: clean(String(data.lyrics).replace(/<br\s*\/?\s*>/gi, "\n").replace(/<[^>]+>/g, "")),
+        copyright: clean(data.lyrics_copyright || "Lyrics powered by JioSaavn")
+      };
+    }
+
+    if (!title) return { lyrics: "", copyright: "" };
+    const fallbackUrl = new URL("https://lrclib.net/api/search");
+    fallbackUrl.searchParams.set("track_name", title);
+    if (artist) fallbackUrl.searchParams.set("artist_name", artist.split(",")[0].trim());
+    const matches = await this.fetchJson(fallbackUrl).catch(() => []);
+    const match = Array.isArray(matches)
+      ? matches.find((item) => item?.plainLyrics || item?.syncedLyrics)
+      : null;
+    const lyrics = match?.plainLyrics || stripSyncedLyrics(match?.syncedLyrics || "");
     return {
-      lyrics: clean(String(data.lyrics).replace(/<br\s*\/?\s*>/gi, "\n").replace(/<[^>]+>/g, "")),
-      copyright: clean(data.lyrics_copyright || "Lyrics powered by JioSaavn")
+      lyrics: clean(lyrics || ""),
+      copyright: lyrics ? "Lyrics powered by LRCLIB" : ""
     };
   }
 
@@ -426,6 +441,12 @@ function editDistance(left, right) {
 
 function clean(value) {
   return String(value).replace(/&amp;/g, "&").replace(/&quot;/g, "\"").replace(/&#039;/g, "'").trim();
+}
+
+function stripSyncedLyrics(value) {
+  return String(value || "")
+    .replace(/^\[(?:\d{1,2}:)?\d{1,2}[.:]\d{1,3}\]\s*/gm, "")
+    .trim();
 }
 
 function decryptMediaUrl(encryptedMediaUrl, hasHighQuality) {
