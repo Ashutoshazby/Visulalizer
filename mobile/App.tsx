@@ -163,8 +163,12 @@ export default function App() {
       const songs = Array.isArray(json.songs) ? json.songs : [];
       setLibrarySongs(songs);
       setLibraryMessage(songs.length ? `${safeUser}'s favorite songs` : "No favorites yet for this profile.");
+      const playlistResponse = await fetch(`${API_BASE}/api/playlists/shared?user=${encodeURIComponent(safeUser)}`);
+      const playlistJson = await playlistResponse.json().catch(() => ({}));
+      setMyPlaylist(playlistResponse.ok && Array.isArray(playlistJson.songs) ? playlistJson.songs : []);
     } catch {
       setLibrarySongs([]);
+      setMyPlaylist([]);
       setLibraryMessage("Favorites could not be loaded right now.");
     }
   }, []);
@@ -478,9 +482,30 @@ export default function App() {
     Alert.alert("Queued", `${song.title} will play next.`);
   }
 
-  function addToMyPlaylist(song: Song) {
-    setMyPlaylist((items) => items.some((item) => item.id === song.id) ? items : [song, ...items]);
-    Alert.alert("Added", `${song.title} added to My playlist.`);
+  async function addToMyPlaylist(song: Song) {
+    const user = (selectedUser || profileInput || "").trim();
+    if (!user) return setShowProfileSetup(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/playlists/shared/add`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user, song }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) throw new Error(data.error || "Could not update playlist.");
+      setMyPlaylist(Array.isArray(data.songs) ? data.songs : []);
+      Alert.alert("Added", `${song.title} added to ${user}'s shared playlist.`);
+    } catch (error) {
+      Alert.alert("Playlist unavailable", error instanceof Error ? error.message : "Could not update playlist.");
+    }
+  }
+
+  async function removeFromSharedPlaylist(song: Song) {
+    if (!selectedUser) return;
+    try {
+      const response = await fetch(`${API_BASE}/api/playlists/shared/remove`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user: selectedUser, songId: song.id }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) throw new Error(data.error || "Could not remove song.");
+      setMyPlaylist(Array.isArray(data.songs) ? data.songs : []);
+    } catch (error) {
+      Alert.alert("Remove failed", error instanceof Error ? error.message : "Could not remove song.");
+    }
   }
 
   function showSongMenu(song: Song) {
@@ -608,7 +633,7 @@ export default function App() {
 
       <Text style={styles.libraryMessage}>{libraryMessage}</Text>
       {recentSongs.length ? <View style={styles.libraryShelf}><Text style={styles.shelfTitle}>Recently played</Text><ScrollView horizontal showsHorizontalScrollIndicator={false}>{recentSongs.slice(0, 10).map((song) => <Pressable key={song.id} style={styles.shelfCard} onPress={() => playSong(song, recentSongs)} onLongPress={() => showSongMenu(song)}>{song.artwork ? <Image source={{ uri: song.artwork }} style={styles.shelfArt} /> : <View style={styles.shelfArt} />}<Text style={styles.shelfSong} numberOfLines={1}>{song.title}</Text></Pressable>)}</ScrollView></View> : null}
-      {myPlaylist.length ? <View style={styles.libraryShelf}><Text style={styles.shelfTitle}>My playlist</Text><ScrollView horizontal showsHorizontalScrollIndicator={false}>{myPlaylist.slice(0, 10).map((song) => <Pressable key={song.id} style={styles.shelfCard} onPress={() => playSong(song, myPlaylist)} onLongPress={() => showSongMenu(song)}>{song.artwork ? <Image source={{ uri: song.artwork }} style={styles.shelfArt} /> : <View style={styles.shelfArt} />}<Text style={styles.shelfSong} numberOfLines={1}>{song.title}</Text></Pressable>)}</ScrollView></View> : null}
+      <View style={styles.libraryShelf}><Text style={styles.shelfTitle}>{selectedUser ? `${selectedUser}'s shared playlist` : "Shared playlist"}</Text>{myPlaylist.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false}>{myPlaylist.slice(0, 20).map((song) => <Pressable key={song.id} style={styles.shelfCard} onPress={() => playSong(song, myPlaylist)} onLongPress={() => void removeFromSharedPlaylist(song)}>{song.artwork ? <Image source={{ uri: song.artwork }} style={styles.shelfArt} /> : <View style={styles.shelfArt} />}<Text style={styles.shelfSong} numberOfLines={1}>{song.title}</Text></Pressable>)}</ScrollView> : <Text style={styles.libraryMessage}>No songs in this shared playlist yet.</Text>}</View>
 
       <FlatList
         data={librarySongs}

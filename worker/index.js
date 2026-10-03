@@ -98,6 +98,24 @@ export default {
         const profile = await removeFavorite(env.LIBRARY_DB, user, songId);
         return json({ ok: true, user: profile.name, songs: profile.songs });
       }
+      if (url.pathname === "/api/playlists/shared" && request.method === "GET") {
+        const user = cleanName(url.searchParams.get("user"));
+        if (!user) return json({ ok: false, error: "Missing user name." }, 400);
+        return json({ ok: true, user, songs: await getSharedPlaylist(env.LIBRARY_DB, user) });
+      }
+      if (url.pathname === "/api/playlists/shared/add" && request.method === "POST") {
+        const body = await readJson(request);
+        const user = cleanName(body.user);
+        if (!user || !body.song?.id) return json({ ok: false, error: "Missing user name or song payload." }, 400);
+        return json({ ok: true, user, songs: await addSharedPlaylistSong(env.LIBRARY_DB, user, body.song) });
+      }
+      if (url.pathname === "/api/playlists/shared/remove" && request.method === "POST") {
+        const body = await readJson(request);
+        const user = cleanName(body.user);
+        const songId = String(body.songId || "").trim();
+        if (!user || !songId) return json({ ok: false, error: "Missing user name or song id." }, 400);
+        return json({ ok: true, user, songs: await removeSharedPlaylistSong(env.LIBRARY_DB, user, songId) });
+      }
 
       return json({ ok: false, error: "Route not found." }, 404);
     } catch (error) {
@@ -196,6 +214,36 @@ async function removeFavorite(db, userName, songId) {
   await db.prepare("DELETE FROM favorites WHERE profile_slug = ? AND song_id = ?")
     .bind(slugify(profile.name), String(songId)).run();
   return getProfile(db, profile.name);
+}
+
+async function getSharedPlaylist(db, userName) {
+  const { results } = await db.prepare(`
+    SELECT song_id AS id, title, artist, album, language, artwork
+    FROM playlist_songs
+    WHERE profile_slug = ?
+    ORDER BY added_at DESC
+    LIMIT 200
+  `).bind(slugify(userName)).all();
+  return results;
+}
+
+async function addSharedPlaylistSong(db, userName, song) {
+  const profile = await registerProfile(db, userName);
+  const normalized = normalizeSong(song);
+  await db.prepare(`
+    INSERT INTO playlist_songs (profile_slug, song_id, title, artist, album, language, artwork, added_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())
+    ON CONFLICT(profile_slug, song_id) DO UPDATE SET
+      title = excluded.title, artist = excluded.artist, album = excluded.album,
+      language = excluded.language, artwork = excluded.artwork, added_at = unixepoch()
+  `).bind(slugify(profile.name), normalized.id, normalized.title, normalized.artist, normalized.album, normalized.language, normalized.artwork).run();
+  return getSharedPlaylist(db, profile.name);
+}
+
+async function removeSharedPlaylistSong(db, userName, songId) {
+  await db.prepare("DELETE FROM playlist_songs WHERE profile_slug = ? AND song_id = ?")
+    .bind(slugify(userName), String(songId)).run();
+  return getSharedPlaylist(db, userName);
 }
 
 function normalizeSong(song) {
