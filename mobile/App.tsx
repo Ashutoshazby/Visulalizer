@@ -34,6 +34,7 @@ export default function App() {
   const searchRequestRef = useRef(0);
   const nowPlayingRef = useRef(false);
   const swipeStartRef = useRef(0);
+  const lyricsRequestRef = useRef(0);
   const waveMotion = useRef(new Animated.Value(0)).current;
   const { width } = useWindowDimensions();
   const compactLayout = width < 420;
@@ -65,6 +66,7 @@ export default function App() {
   const [myPlaylist, setMyPlaylist] = useState<Song[]>([]);
   const [quality, setQuality] = useState<Quality>("high");
   const [sleepEndsAt, setSleepEndsAt] = useState<number | null>(null);
+  const [sleepRemainingMs, setSleepRemainingMs] = useState(0);
   const [playerStateReady, setPlayerStateReady] = useState(false);
 
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
@@ -107,6 +109,39 @@ export default function App() {
     }, delay);
     return () => clearTimeout(timer);
   }, [player, sleepEndsAt]);
+
+  useEffect(() => {
+    if (!sleepEndsAt) {
+      setSleepRemainingMs(0);
+      return;
+    }
+    const update = () => setSleepRemainingMs(Math.max(0, sleepEndsAt - Date.now()));
+    update();
+    const ticker = setInterval(update, 1000);
+    return () => clearInterval(ticker);
+  }, [sleepEndsAt]);
+
+  useEffect(() => {
+    if (!showNowPlaying || !currentSong) return;
+    const requestId = ++lyricsRequestRef.current;
+    setLyrics("");
+    setLyricsCredit("");
+    setLyricsLoading(true);
+    fetch(`${API_BASE}/api/music/lyrics?id=${encodeURIComponent(currentSong.id)}`)
+      .then(async (response) => ({ response, data: await response.json().catch(() => ({})) }))
+      .then(({ response, data }) => {
+        if (requestId !== lyricsRequestRef.current) return;
+        setLyrics(response.ok ? data.lyrics || "Lyrics are not available for this song." : "Lyrics are not available for this song.");
+        setLyricsCredit(data.copyright || "");
+      })
+      .catch(() => {
+        if (requestId === lyricsRequestRef.current) setLyrics("Lyrics could not be loaded right now.");
+      })
+      .finally(() => {
+        if (requestId === lyricsRequestRef.current) setLyricsLoading(false);
+      });
+    return () => { lyricsRequestRef.current += 1; };
+  }, [currentSong, showNowPlaying]);
 
   useEffect(() => {
     const cleanQuery = query.trim();
@@ -518,21 +553,8 @@ export default function App() {
     ]);
   }
 
-  async function openNowPlaying() {
+  function openNowPlaying() {
     setShowNowPlaying(true);
-    if (!currentSong) return;
-    setLyricsLoading(true);
-    try {
-      const response = await fetch(`${API_BASE}/api/music/lyrics?id=${encodeURIComponent(currentSong.id)}`);
-      const data = await response.json().catch(() => ({}));
-      setLyrics(response.ok ? data.lyrics || "Lyrics are not available for this song." : "Lyrics are not available for this song.");
-      setLyricsCredit(data.copyright || "");
-    } catch {
-      setLyrics("Lyrics could not be loaded right now.");
-      setLyricsCredit("");
-    } finally {
-      setLyricsLoading(false);
-    }
   }
 
   function chooseSleepTimer() {
@@ -665,7 +687,7 @@ export default function App() {
         {activeTab === "home" ? renderHomeList() : renderLibraryView()}
 
         <View style={[styles.player, compactLayout && styles.playerCompact]}>
-          <Pressable style={styles.nowPlaying} onPress={() => void openNowPlaying()}>
+          <Pressable style={styles.nowPlaying} onPress={openNowPlaying}>
             {currentSong?.artwork ? <Image source={{ uri: currentSong.artwork }} style={styles.playerArtwork} /> : <View style={styles.playerArtwork} />}
             <View style={styles.playerCopy}><Text style={styles.playerTitle} numberOfLines={1}>{currentSong?.title || "Choose a song"}</Text><Text style={styles.playerArtist} numberOfLines={1}>{currentSong?.artist || "Ready when you are"}</Text></View>
             <Pressable style={styles.saveButton} onPress={(event) => { event.stopPropagation(); void saveSongToLibrary(currentSong); }}>
@@ -763,7 +785,7 @@ export default function App() {
             <View style={styles.fullControls}>
               <Pressable onPress={() => setShuffleEnabled((value) => !value)}><Ionicons name="shuffle" size={23} color={shuffleEnabled ? "#70ddef" : "#91a0a6"} /></Pressable><Pressable onPress={() => changeTrack(-1)}><Ionicons name="play-skip-back" size={29} color="#f5f8f9" /></Pressable><Pressable style={styles.fullPlay} onPress={togglePlayback}><Ionicons name={playback.playing ? "pause" : "play"} size={35} color="#20100a" /></Pressable><Pressable onPress={() => changeTrack(1)}><Ionicons name="play-skip-forward" size={29} color="#f5f8f9" /></Pressable><Pressable onPress={cycleRepeat}><Ionicons name={repeatMode === "one" ? "repeat" : "repeat-outline"} size={23} color={repeatMode !== "off" ? "#70ddef" : "#91a0a6"} /></Pressable>
             </View>
-            <View style={styles.toolRow}><Pressable style={styles.toolButton} onPress={chooseSleepTimer}><Ionicons name="moon-outline" size={19} color={sleepEndsAt ? "#70ddef" : "#b8c5c9"} /><Text style={styles.toolText}>{sleepEndsAt ? "Timer on" : "Sleep"}</Text></Pressable><Pressable style={styles.toolButton} onPress={cycleQuality}><Ionicons name="options-outline" size={19} color="#b8c5c9" /><Text style={styles.toolText}>{quality}</Text></Pressable><Pressable style={styles.toolButton} onPress={() => setPlayerPanel("queue")}><Ionicons name="list" size={20} color="#b8c5c9" /><Text style={styles.toolText}>Queue</Text></Pressable></View>
+            <View style={styles.toolRow}><Pressable style={styles.toolButton} onPress={chooseSleepTimer}><Ionicons name="moon-outline" size={19} color={sleepEndsAt ? "#70ddef" : "#b8c5c9"} /><Text style={styles.toolText}>{sleepEndsAt ? formatRemaining(sleepRemainingMs) : "Sleep"}</Text></Pressable><Pressable style={styles.toolButton} onPress={cycleQuality}><Ionicons name="options-outline" size={19} color="#b8c5c9" /><Text style={styles.toolText}>{quality}</Text></Pressable><Pressable style={styles.toolButton} onPress={() => setPlayerPanel("queue")}><Ionicons name="list" size={20} color="#b8c5c9" /><Text style={styles.toolText}>Queue</Text></Pressable></View>
             <View style={styles.panelTabs}><Pressable style={[styles.panelTab, playerPanel === "lyrics" && styles.panelTabActive]} onPress={() => setPlayerPanel("lyrics")}><Text style={styles.panelTabText}>Lyrics</Text></Pressable><Pressable style={[styles.panelTab, playerPanel === "queue" && styles.panelTabActive]} onPress={() => setPlayerPanel("queue")}><Text style={styles.panelTabText}>Up next</Text></Pressable></View>
             {playerPanel === "lyrics" ? <ScrollView style={styles.panelBody} contentContainerStyle={styles.lyricsBody}>{lyricsLoading ? <ActivityIndicator color="#70ddef" /> : <Text style={styles.lyricsText}>{lyrics || "Lyrics are not available for this song."}</Text>}{lyricsCredit ? <Text style={styles.lyricsCredit}>{lyricsCredit}</Text> : null}</ScrollView> : <ScrollView style={styles.panelBody}>{queueRef.current.map((song, index) => <Pressable key={`${song.id}-${index}`} style={[styles.queueRow, index === indexRef.current && styles.queueRowActive]} onPress={() => playAt(index)}><Text style={styles.queueIndex}>{index === indexRef.current ? "•" : index + 1}</Text><View style={styles.songCopy}><Text style={styles.songTitle} numberOfLines={1}>{song.title}</Text><Text style={styles.songArtist} numberOfLines={1}>{song.artist}</Text></View><Pressable onPress={(event) => { event.stopPropagation(); const queue = [...queueRef.current]; queue.splice(index, 1); queueRef.current = queue; }}><Ionicons name="close" size={19} color="#839197" /></Pressable></Pressable>)}</ScrollView>}
           </View>
@@ -797,6 +819,11 @@ function streamUrl(id: string, quality: Quality) { return `${API_BASE}/api/music
 function formatTime(value = 0) {
   if (!Number.isFinite(value) || value <= 0) return "0:00";
   return `${Math.floor(value / 60)}:${Math.floor(value % 60).toString().padStart(2, "0")}`;
+}
+function formatRemaining(milliseconds: number) {
+  const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 const styles = StyleSheet.create({
