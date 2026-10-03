@@ -117,6 +117,67 @@ class JioSaavnProvider extends MusicProvider {
     }
   }
 
+  async searchCatalog({ query, language = "auto", limit = 12 }) {
+    if (!query.trim()) return { songs: [], playlists: [] };
+    const requestedQuery = this.withLanguage(normalizeQuery(query), language);
+    const autocompleteUrl = new URL("https://www.jiosaavn.com/api.php");
+    autocompleteUrl.searchParams.set("__call", "autocomplete.get");
+    autocompleteUrl.searchParams.set("_format", "json");
+    autocompleteUrl.searchParams.set("_marker", "0");
+    autocompleteUrl.searchParams.set("query", requestedQuery);
+
+    let [compatibleSongs, autocomplete] = await Promise.all([
+      this.searchSongs({ query: requestedQuery, language: "auto", limit }),
+      this.fetchJson(autocompleteUrl).catch(() => ({}))
+    ]);
+    const hits = [...(autocomplete?.songs?.data || []), ...(autocomplete?.topquery?.data || [])]
+      .filter((item) => item?.type === "song");
+    const ids = uniqueBy(hits, "id").map((item) => item.id).slice(0, Math.min(4, this.nativeDetailLimit));
+    const nativeDetails = await Promise.allSettled(ids.map((id) => this.getNativeSong(id)));
+    const nativeSongs = nativeDetails
+      .filter((result) => result.status === "fulfilled")
+      .map((result) => result.value);
+    const suggestedArtist = closestArtist(query, [...nativeSongs, ...compatibleSongs]);
+    if (!(autocomplete?.playlists?.data || []).length && suggestedArtist) {
+      autocompleteUrl.searchParams.set("query", suggestedArtist);
+      autocomplete = await this.fetchJson(autocompleteUrl).catch(() => autocomplete);
+    }
+    const playlists = (autocomplete?.playlists?.data || []).slice(0, 8).map((item) => ({
+      id: String(item.id || ""),
+      title: clean(item.title || "Playlist"),
+      subtitle: clean(item.description || item.extra || "JioSaavn playlist"),
+      artwork: bestArtwork(item.image),
+      language: String(item.language || "").toLowerCase()
+    })).filter((item) => item.id);
+    return { songs: uniqueSongs([...nativeSongs, ...compatibleSongs]).slice(0, limit), playlists };
+  }
+
+  async getPlaylist(id, limit = 30) {
+    if (!id) throw new Error("Missing playlist id.");
+    const url = new URL("https://www.jiosaavn.com/api.php");
+    url.searchParams.set("__call", "playlist.getDetails");
+    url.searchParams.set("_format", "json");
+    url.searchParams.set("_marker", "0");
+    url.searchParams.set("listid", id);
+    url.searchParams.set("p", "1");
+    url.searchParams.set("n", String(Math.min(40, limit)));
+    const data = await this.fetchJson(url);
+    const songs = (data?.songs || []).map((song) => {
+      song.media_url = decryptMediaUrl(song.encrypted_media_url, song["320kbps"] === "true") || song.media_preview_url || song.vlink;
+      return this.normalizeSong(song);
+    }).filter((song) => song.id && song.streamUrl).slice(0, limit);
+    return {
+      playlist: {
+        id: String(data?.listid || id),
+        title: clean(data?.listname || "Playlist"),
+        subtitle: clean(data?.firstname || "JioSaavn playlist"),
+        artwork: bestArtwork(data?.image),
+        songCount: songs.length
+      },
+      songs
+    };
+  }
+
   async getSong(id) {
     if (!id) throw new Error("Missing song id.");
     try {
@@ -242,6 +303,41 @@ function bestMedia(value) {
   if (!Array.isArray(value)) return "";
   const preferred = value.find((item) => /320|500/i.test(item.quality)) || value[value.length - 1];
   return (preferred?.url || "").replace(/^http:/, "https:");
+}
+
+function bestArtwork(value) {
+  return String(value || "").replace(/-(50|150)x\1(?=\.[a-z]+(?:\?|$))/i, "-500x500").replace(/^http:/, "https:");
+}
+
+function normalizeQuery(value) {
+  return String(value || "").replace(/[^\p{L}\p{N}\s'-]/gu, " ").replace(/\s+/g, " ").trim();
+}
+
+function closestArtist(query, songs) {
+  const needle = canonical(query);
+  if (!needle || needle.includes(" ")) return "";
+  const candidates = songs.flatMap((song) => String(song.artist || "").split(",")).map((name) => name.trim()).filter(Boolean);
+  let best = { name: "", score: Infinity };
+  for (const name of candidates) {
+    const firstName = canonical(name).split(" ")[0];
+    const score = editDistance(needle, firstName);
+    if (score < best.score) best = { name, score };
+  }
+  return best.score <= Math.max(1, Math.floor(needle.length * 0.3)) ? best.name : "";
+}
+
+function editDistance(left, right) {
+  const row = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= left.length; i += 1) {
+    let previous = row[0];
+    row[0] = i;
+    for (let j = 1; j <= right.length; j += 1) {
+      const current = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (left[i - 1] === right[j - 1] ? 0 : 1));
+      previous = current;
+    }
+  }
+  return row[right.length];
 }
 
 function clean(value) {

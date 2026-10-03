@@ -1,13 +1,14 @@
 import * as FileSystem from "expo-file-system/legacy";
-import { StatusBar } from "expo-status-bar";
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Easing, FlatList, Image, ImageBackground, Keyboard, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Easing, FlatList, Image, ImageBackground, Keyboard, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE || "https://saanjh-music-api.night-drive-radio.workers.dev";
 const PROFILE_FILE = `${FileSystem.documentDirectory ?? "file:///"}saanjh-profile.json`;
 
 type Song = { id: string; title: string; artist?: string; album?: string; language?: string; artwork?: string };
+type Playlist = { id: string; title: string; subtitle?: string; artwork?: string; songCount?: number };
 type TabKey = "home" | "library";
 type RepeatMode = "off" | "all" | "one";
 
@@ -33,9 +34,10 @@ export default function App() {
 
   const [query, setQuery] = useState("");
   const [songs, setSongs] = useState<Song[]>([]);
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState("Gathering your evening mix...");
+  const [message, setMessage] = useState("Finding music for you...");
   const [introVisible, setIntroVisible] = useState(true);
   const [activeTab, setActiveTab] = useState<TabKey>("home");
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
@@ -181,7 +183,7 @@ export default function App() {
     });
 
     loadRecommendations();
-    const introTimer = setTimeout(() => setIntroVisible(false), 1900);
+    const introTimer = setTimeout(() => setIntroVisible(false), 1200);
     const waveAnimation = Animated.loop(Animated.sequence([
       Animated.timing(waveMotion, { toValue: 1, duration: 4200, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
       Animated.timing(waveMotion, { toValue: 0, duration: 4200, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
@@ -225,7 +227,7 @@ export default function App() {
     player.setActiveForLockScreen(true, {
       title: song.title,
       artist: song.artist || "Saanjh Music",
-      albumTitle: song.album || "Evening mix",
+      albumTitle: song.album || "Saanjh mix",
       artworkUrl: song.artwork,
     });
     player.play();
@@ -272,11 +274,13 @@ export default function App() {
     setMessage("This song could not play. Try another track.");
   }, [currentSong?.id, playback.error]);
 
-  async function loadRecommendations() {
+  async function loadRecommendations(fresh = false) {
     setLoading(true);
-    setMessage("Gathering your evening mix...");
+    setMessage("Finding music for you...");
+    setPlaylists([]);
     try {
-      const nextSongs = await fetchSongs("/api/music/recommendations?mood=auto&language=auto&limit=30");
+      const refresh = fresh ? `&fresh=${Date.now()}` : "";
+      const nextSongs = await fetchSongs(`/api/music/recommendations?mood=auto&language=auto&limit=18${refresh}`);
       queueRef.current = nextSongs;
       setSongs(nextSongs);
       setMessage(nextSongs.length ? "" : "No songs found right now.");
@@ -294,12 +298,33 @@ export default function App() {
     setLoading(true);
     setMessage("Searching...");
     try {
-      const nextSongs = await fetchSongs(`/api/music/search?query=${encodeURIComponent(cleanQuery)}&language=auto&limit=30`);
+      const response = await fetch(`${API_BASE}/api/music/search?query=${encodeURIComponent(cleanQuery)}&language=auto&limit=24`);
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok || json.ok === false) throw new Error(json.error || `Music service returned ${response.status}`);
+      const nextSongs = Array.isArray(json.songs) ? json.songs : [];
+      const nextPlaylists = Array.isArray(json.playlists) ? json.playlists : [];
       queueRef.current = nextSongs;
       setSongs(nextSongs);
-      setMessage(nextSongs.length ? "" : "No songs found. Try another name.");
+      setPlaylists(nextPlaylists);
+      setMessage(nextSongs.length || nextPlaylists.length ? "" : "Nothing found. Try a shorter song, artist, or playlist name.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Search failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function openPlaylist(playlist: Playlist) {
+    setLoading(true);
+    setMessage(`Opening ${playlist.title}...`);
+    try {
+      const nextSongs = await fetchSongs(`/api/music/playlist?id=${encodeURIComponent(playlist.id)}&limit=30`);
+      queueRef.current = nextSongs;
+      setSongs(nextSongs);
+      setPlaylists([]);
+      setMessage(nextSongs.length ? playlist.title : "This playlist is empty right now.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Playlist could not be opened.");
     } finally {
       setLoading(false);
     }
@@ -376,12 +401,12 @@ export default function App() {
         <View style={styles.brandRow}>
           <Image source={require("./assets/saanjh-logo.png")} style={styles.brandLogo} />
           <View style={styles.headerBrand}>
-            <Text style={styles.eyebrow}>MUSIC FOR SLOW EVENINGS</Text>
+            <Text style={styles.eyebrow}>MUSIC FOR EVERY MOOD</Text>
             <Text style={styles.title}>Saanjh</Text>
             <Text style={styles.credit}>Made by Ashu</Text>
           </View>
         </View>
-        <Pressable style={[styles.mixButton, compactLayout && styles.mixButtonCompact]} onPress={loadRecommendations}>
+        <Pressable style={[styles.mixButton, compactLayout && styles.mixButtonCompact]} onPress={() => loadRecommendations(true)}>
           <Text style={styles.mixButtonText}>NEW MIX</Text>
         </Pressable>
       </View>
@@ -399,7 +424,7 @@ export default function App() {
       </View>
 
       <View style={[styles.searchRow, compactLayout && styles.searchRowCompact]}>
-        <TextInput style={[styles.searchInput, compactLayout && styles.searchInputCompact]} value={query} onChangeText={setQuery} onSubmitEditing={search} returnKeyType="search" placeholder="Song, artist or album" placeholderTextColor="#728087" />
+        <TextInput style={[styles.searchInput, compactLayout && styles.searchInputCompact]} value={query} onChangeText={setQuery} onSubmitEditing={search} returnKeyType="search" placeholder="Song, artist, album or playlist" placeholderTextColor="#728087" />
         <Pressable style={[styles.searchButton, compactLayout && styles.searchButtonCompact]} onPress={search}><Text style={styles.searchButtonText}>SEARCH</Text></Pressable>
       </View>
       {loading ? <ActivityIndicator color="#70ddef" style={styles.loader} /> : null}
@@ -409,6 +434,21 @@ export default function App() {
         keyExtractor={(item) => item.id}
         contentContainerStyle={[styles.list, compactLayout && styles.listCompact]}
         showsVerticalScrollIndicator={false}
+        ListHeaderComponent={playlists.length ? (
+          <View style={styles.playlistSection}>
+            <Text style={styles.sectionTitle}>Playlists</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.playlistRail}>
+              {playlists.map((playlist) => (
+                <Pressable key={playlist.id} style={styles.playlistCard} onPress={() => openPlaylist(playlist)}>
+                  {playlist.artwork ? <Image source={{ uri: playlist.artwork }} style={styles.playlistArt} /> : <View style={styles.playlistArt} />}
+                  <Text style={styles.playlistTitle} numberOfLines={2}>{playlist.title}</Text>
+                  <Text style={styles.playlistSubtitle} numberOfLines={1}>{playlist.subtitle || "Playlist"}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+            <Text style={styles.sectionTitle}>Songs</Text>
+          </View>
+        ) : null}
         renderItem={({ item }) => (
           <Pressable style={[styles.songRow, item.id === currentSong?.id && styles.songRowActive]} onPress={() => playSong(item, songs)}>
             {item.artwork ? <Image source={{ uri: item.artwork }} style={styles.thumb} /> : <View style={styles.thumbFallback}><Text style={styles.note}>♪</Text></View>}
@@ -458,13 +498,14 @@ export default function App() {
   );
 
   return (
+    <SafeAreaProvider>
+    <View style={styles.appRoot}>
+    <StatusBar barStyle="light-content" backgroundColor="#030303" translucent={false} />
     <ImageBackground source={require("./assets/saanjh-sunset.png")} style={styles.background} resizeMode="cover">
       <View style={styles.backdrop} />
       <Animated.View style={[styles.nativeWave, styles.nativeWaveFar, { transform: [{ translateX: waveMotion.interpolate({ inputRange: [0, 1], outputRange: [-18, 18] }) }] }]} />
       <Animated.View style={[styles.nativeWave, styles.nativeWaveNear, { transform: [{ translateX: waveMotion.interpolate({ inputRange: [0, 1], outputRange: [20, -16] }) }] }]} />
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar style="light" />
-        {introVisible ? <View style={styles.intro}><Image source={require("./assets/saanjh-logo.png")} style={styles.introLogo} /><Text style={styles.introKicker}>MUSIC FOR SLOW EVENINGS</Text><Text style={styles.introTitle}>SAANJH</Text><Text style={styles.introCredit}>Made by Ashu</Text></View> : null}
+      <SafeAreaView style={styles.safeArea} edges={["top", "right", "bottom", "left"]}>
 
         {activeTab === "home" ? renderHomeList() : renderLibraryView()}
 
@@ -542,6 +583,9 @@ export default function App() {
         ) : null}
       </SafeAreaView>
     </ImageBackground>
+    {introVisible ? <View style={styles.intro}><Image source={require("./assets/saanjh-logo.png")} style={styles.introLogo} /></View> : null}
+    </View>
+    </SafeAreaProvider>
   );
 }
 
@@ -559,17 +603,15 @@ function formatTime(value = 0) {
 }
 
 const styles = StyleSheet.create({
+  appRoot: { flex: 1, backgroundColor: "#030303" },
   background: { flex: 1, backgroundColor: "#071014" },
   backdrop: { ...StyleSheet.absoluteFill, backgroundColor: "rgba(4, 10, 13, 0.54)" },
   safeArea: { flex: 1 },
   nativeWave: { position: "absolute", left: -40, right: -40, height: 80, borderTopWidth: 2, borderColor: "rgba(231, 249, 246, 0.34)", borderRadius: 200 },
   nativeWaveFar: { bottom: 250, opacity: 0.5 },
   nativeWaveNear: { bottom: 175, height: 110, opacity: 0.68 },
-  intro: { ...StyleSheet.absoluteFill, zIndex: 20, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(5, 12, 15, 0.72)" },
-  introLogo: { width: 86, height: 86, borderRadius: 20, marginBottom: 18 },
-  introKicker: { color: "#ffc49f", fontSize: 10, fontWeight: "800", letterSpacing: 2.4, marginBottom: 12 },
-  introTitle: { color: "#fff9f2", fontFamily: "serif", fontSize: 58, letterSpacing: 4 },
-  introCredit: { color: "rgba(255, 231, 211, 0.78)", fontSize: 12, letterSpacing: 1, marginTop: 14 },
+  intro: { ...StyleSheet.absoluteFill, zIndex: 40, alignItems: "center", justifyContent: "center", backgroundColor: "#030303" },
+  introLogo: { width: 96, height: 96, borderRadius: 20 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12 },
   headerCompact: { paddingHorizontal: 16, paddingTop: 12 },
   brandRow: { flexDirection: "row", alignItems: "center", gap: 10, flexShrink: 1 },
@@ -598,6 +640,13 @@ const styles = StyleSheet.create({
   message: { color: "#9ba9af", fontSize: 13, paddingHorizontal: 20, paddingVertical: 8 },
   list: { paddingHorizontal: 14, paddingBottom: 205 },
   listCompact: { paddingBottom: 220 },
+  playlistSection: { paddingTop: 4, paddingBottom: 8 },
+  sectionTitle: { color: "#f4ede8", fontSize: 15, fontWeight: "900", marginHorizontal: 6, marginBottom: 9 },
+  playlistRail: { gap: 10, paddingHorizontal: 4, paddingBottom: 14 },
+  playlistCard: { width: 126 },
+  playlistArt: { width: 126, height: 126, borderRadius: 7, backgroundColor: "#11191d", marginBottom: 7 },
+  playlistTitle: { color: "#eef4f6", fontSize: 12, lineHeight: 16, fontWeight: "800", minHeight: 32 },
+  playlistSubtitle: { color: "#829197", fontSize: 10, marginTop: 3 },
   songRow: { flexDirection: "row", alignItems: "center", gap: 11, padding: 7, borderWidth: 1, borderColor: "transparent", borderRadius: 7 },
   songRowActive: { backgroundColor: "rgba(112, 58, 39, 0.72)", borderColor: "#a66a4f" },
   thumb: { width: 50, height: 50, borderRadius: 5, backgroundColor: "#11191d" },

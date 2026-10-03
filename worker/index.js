@@ -15,7 +15,7 @@ export default {
       const url = new URL(request.url);
       const provider = createJioSaavnProvider({
         baseUrl: env.SAAVN_API_BASE || "https://saavan-api-psi.vercel.app",
-        maxRecommendationAttempts: 5,
+        maxRecommendationAttempts: 3,
         nativeDetailLimit: 4
       });
 
@@ -26,24 +26,36 @@ export default {
         return json({ ok: true, provider: provider.name, library: "cloudflare-d1", platform: "cloudflare-workers" });
       }
       if (url.pathname === "/api/music/search" && request.method === "GET") {
-        const songs = await provider.searchSongs({
+        const cached = await caches.default.match(cacheKey(request));
+        if (cached) return withCors(cached);
+        const results = await provider.searchCatalog({
           query: url.searchParams.get("query") || "",
           language: url.searchParams.get("language") || "auto",
           limit: boundedNumber(url.searchParams.get("limit"), 12, 1, 50)
         });
-        return json({ ok: true, songs });
+        return cacheJson(request, { ok: true, ...results }, 300);
+      }
+      if (url.pathname === "/api/music/playlist" && request.method === "GET") {
+        const id = String(url.searchParams.get("id") || "").trim();
+        if (!id) return json({ ok: false, error: "Missing playlist id." }, 400);
+        const cached = await caches.default.match(cacheKey(request));
+        if (cached) return withCors(cached);
+        const results = await provider.getPlaylist(id, boundedNumber(url.searchParams.get("limit"), 30, 1, 40));
+        return cacheJson(request, { ok: true, ...results }, 900);
       }
       if (url.pathname.startsWith("/api/music/song/") && request.method === "GET") {
         const id = decodeURIComponent(url.pathname.slice("/api/music/song/".length));
         return json({ ok: true, song: await provider.getSong(id) });
       }
       if (url.pathname === "/api/music/recommendations" && request.method === "GET") {
+        const cached = await caches.default.match(cacheKey(request));
+        if (cached) return withCors(cached);
         const songs = await provider.getRecommendations({
           mood: url.searchParams.get("mood") || "late-night",
           language: url.searchParams.get("language") || "auto",
           limit: boundedNumber(url.searchParams.get("limit"), 18, 1, 40)
         });
-        return json({ ok: true, songs });
+        return cacheJson(request, { ok: true, songs }, 180);
       }
       if (url.pathname === "/api/music/stream" && (request.method === "GET" || request.method === "HEAD")) {
         return streamSong(request, url, provider);
@@ -210,4 +222,22 @@ function boundedNumber(value, fallback, minimum, maximum) {
 
 function json(payload, status = 200) {
   return Response.json(payload, { status, headers: { ...CORS_HEADERS, "Cache-Control": "no-store" } });
+}
+
+async function cacheJson(request, payload, maxAge) {
+  const response = Response.json(payload, { headers: { ...CORS_HEADERS, "Cache-Control": `public, max-age=${maxAge}` } });
+  await caches.default.put(cacheKey(request), response.clone());
+  return response;
+}
+
+function cacheKey(request) {
+  const url = new URL(request.url);
+  url.searchParams.set("_cache", "v2");
+  return new Request(url, request);
+}
+
+function withCors(response) {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(CORS_HEADERS)) headers.set(name, value);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
