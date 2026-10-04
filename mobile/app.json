@@ -2,7 +2,7 @@
   "expo": {
     "name": "Saanjh Music",
     "slug": "saanjh-music",
-    "version": "2.5.0",
+    "version": "2.6.0",
     "orientation": "portrait",
     "icon": "./assets/saanjh-logo.png",
     "userInterfaceStyle": "dark",
@@ -15,14 +15,27 @@
           "recordAudioAndroid": false
         }
       ],
-      "./plugins/withBackToBackground"
+      "./plugins/withBackToBackground",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#030303",
+          "image": "./assets/saanjh-logo.png",
+          "imageWidth": 92,
+          "resizeMode": "contain",
+          "dark": {
+            "backgroundColor": "#030303",
+            "image": "./assets/saanjh-logo.png"
+          }
+        }
+      ]
     ],
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "package": "com.ashutosh.nightdriveradio",
-      "versionCode": 12,
+      "versionCode": 13,
       "adaptiveIcon": {
         "backgroundColor": "#07324B",
         "foregroundImage": "./assets/saanjh-logo.png"

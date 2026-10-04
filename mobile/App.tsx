@@ -33,11 +33,16 @@ export default function App() {
   const repeatRef = useRef<RepeatMode>("off");
   const searchRequestRef = useRef(0);
   const nowPlayingRef = useRef(false);
+  const songMenuRef = useRef(false);
   const swipeStartRef = useRef(0);
   const lyricsRequestRef = useRef(0);
   const relatedRequestRef = useRef(0);
   const waveMotion = useRef(new Animated.Value(0)).current;
   const fullPlayerMotion = useRef(new Animated.Value(0)).current;
+  const songMenuMotion = useRef(new Animated.Value(0)).current;
+  const introScale = useRef(new Animated.Value(0.72)).current;
+  const introOpacity = useRef(new Animated.Value(0)).current;
+  const introPulse = useRef(new Animated.Value(0)).current;
   const { width } = useWindowDimensions();
   const compactLayout = width < 420;
 
@@ -72,6 +77,7 @@ export default function App() {
   const [playerStateReady, setPlayerStateReady] = useState(false);
   const [, setQueueRevision] = useState(0);
   const [toast, setToast] = useState("");
+  const [actionSong, setActionSong] = useState<Song | null>(null);
   const favoriteIds = new Set(librarySongs.map((song) => song.id));
 
   const closeNowPlaying = useCallback(() => {
@@ -85,6 +91,18 @@ export default function App() {
       if (finished) setShowNowPlaying(false);
     });
   }, [fullPlayerMotion]);
+
+  const closeSongMenu = useCallback(() => {
+    songMenuRef.current = false;
+    Animated.timing(songMenuMotion, {
+      toValue: 0,
+      duration: 180,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setActionSong(null);
+    });
+  }, [songMenuMotion]);
 
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
   useEffect(() => { selectedUserRef.current = selectedUser; }, [selectedUser]);
@@ -317,21 +335,39 @@ export default function App() {
     });
 
     loadRecommendations();
-    const introTimer = setTimeout(() => setIntroVisible(false), 1200);
+    const introAnimation = Animated.sequence([
+      Animated.parallel([
+        Animated.timing(introOpacity, { toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.spring(introScale, { toValue: 1, damping: 10, stiffness: 145, mass: 0.8, useNativeDriver: true }),
+        Animated.timing(introPulse, { toValue: 1, duration: 900, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      ]),
+      Animated.delay(360),
+      Animated.parallel([
+        Animated.timing(introOpacity, { toValue: 0, duration: 320, easing: Easing.inOut(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(introScale, { toValue: 1.08, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      ]),
+    ]);
+    introAnimation.start(({ finished }) => {
+      if (finished) setIntroVisible(false);
+    });
     const waveAnimation = Animated.loop(Animated.sequence([
       Animated.timing(waveMotion, { toValue: 1, duration: 4200, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
       Animated.timing(waveMotion, { toValue: 0, duration: 4200, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
     ]));
     waveAnimation.start();
     return () => {
-      clearTimeout(introTimer);
+      introAnimation.stop();
       waveAnimation.stop();
       appStateSubscription.remove();
     };
-  }, [waveMotion]);
+  }, [introOpacity, introPulse, introScale, waveMotion]);
 
   useEffect(() => {
     const exitSubscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (songMenuRef.current) {
+        closeSongMenu();
+        return true;
+      }
       if (nowPlayingRef.current) {
         closeNowPlaying();
         return true;
@@ -351,7 +387,7 @@ export default function App() {
       return false;
     });
     return () => exitSubscription.remove();
-  }, [closeNowPlaying]);
+  }, [closeNowPlaying, closeSongMenu]);
 
   const playSong = useCallback((song: Song, queue = queueRef.current) => {
     const index = queue.findIndex((item) => item.id === song.id);
@@ -564,7 +600,7 @@ export default function App() {
     queue.splice(Math.max(0, indexRef.current + 1), 0, song);
     queueRef.current = queue;
     setQueueRevision((value) => value + 1);
-    Alert.alert("Queued", `${song.title} will play next.`);
+    setToast(`${song.title} will play next`);
   }
 
   async function addToMyPlaylist(song: Song) {
@@ -575,7 +611,7 @@ export default function App() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.ok === false) throw new Error(data.error || "Could not update playlist.");
       setMyPlaylist(Array.isArray(data.songs) ? data.songs : []);
-      Alert.alert("Added", `${song.title} added to ${user}'s shared playlist.`);
+      setToast(`Added to ${user}'s playlist`);
     } catch (error) {
       Alert.alert("Playlist unavailable", error instanceof Error ? error.message : "Could not update playlist.");
     }
@@ -594,13 +630,18 @@ export default function App() {
   }
 
   function showSongMenu(song: Song) {
-    Alert.alert(song.title, song.artist || "Song options", [
-      { text: "Play next", onPress: () => addNext(song) },
-      { text: "Add to My playlist", onPress: () => addToMyPlaylist(song) },
-      { text: "Save to favorites", onPress: () => void saveSongToLibrary(song) },
-      { text: "Search artist", onPress: () => { setQuery((song.artist || "").split(",")[0]); setActiveTab("home"); } },
-      { text: "Cancel", style: "cancel" }
-    ]);
+    songMenuRef.current = true;
+    songMenuMotion.setValue(0);
+    setActionSong(song);
+    requestAnimationFrame(() => {
+      Animated.spring(songMenuMotion, {
+        toValue: 1,
+        damping: 22,
+        stiffness: 260,
+        mass: 0.82,
+        useNativeDriver: true,
+      }).start();
+    });
   }
 
   function openNowPlaying() {
@@ -831,6 +872,26 @@ export default function App() {
             </View>
           </View>
         ) : null}
+        {actionSong ? (
+          <Animated.View style={[styles.songMenuOverlay, { opacity: songMenuMotion }]}>
+            <Pressable style={StyleSheet.absoluteFill} onPress={closeSongMenu} />
+            <Animated.View style={[styles.songMenuSheet, {
+              transform: [{ translateY: songMenuMotion.interpolate({ inputRange: [0, 1], outputRange: [320, 0] }) }],
+            }]}>
+              <View style={styles.sheetHandle} />
+              <View style={styles.sheetSongHeader}>
+                {actionSong.artwork ? <Image source={{ uri: actionSong.artwork }} style={styles.sheetArtwork} /> : <View style={styles.sheetArtwork} />}
+                <View style={styles.songCopy}><Text style={styles.sheetTitle} numberOfLines={1}>{actionSong.title}</Text><Text style={styles.sheetArtist} numberOfLines={1}>{actionSong.artist || "Unknown artist"}</Text></View>
+                <Pressable style={styles.sheetClose} onPress={closeSongMenu}><Ionicons name="close" size={21} color="#aab7bc" /></Pressable>
+              </View>
+              <View style={styles.sheetDivider} />
+              <Pressable style={styles.sheetAction} onPress={() => { const song = actionSong; closeSongMenu(); void toggleFavorite(song); }}><View style={styles.sheetActionIcon}><Ionicons name={favoriteIds.has(actionSong.id) ? "heart" : "heart-outline"} size={21} color={favoriteIds.has(actionSong.id) ? "#58d68d" : "#f3a675"} /></View><Text style={styles.sheetActionText}>{favoriteIds.has(actionSong.id) ? "Remove from favorites" : "Save to favorites"}</Text><Ionicons name="chevron-forward" size={18} color="#526168" /></Pressable>
+              <Pressable style={styles.sheetAction} onPress={() => { const song = actionSong; closeSongMenu(); void addToMyPlaylist(song); }}><View style={styles.sheetActionIcon}><Ionicons name="add-circle-outline" size={22} color="#70ddef" /></View><Text style={styles.sheetActionText}>Add to my playlist</Text><Ionicons name="chevron-forward" size={18} color="#526168" /></Pressable>
+              <Pressable style={styles.sheetAction} onPress={() => { const song = actionSong; closeSongMenu(); addNext(song); }}><View style={styles.sheetActionIcon}><Ionicons name="play-skip-forward-outline" size={21} color="#d6e4e8" /></View><Text style={styles.sheetActionText}>Play next</Text><Ionicons name="chevron-forward" size={18} color="#526168" /></Pressable>
+              <Pressable style={styles.sheetAction} onPress={() => { const artist = (actionSong.artist || "").split(",")[0]; closeSongMenu(); setQuery(artist); setActiveTab("home"); }}><View style={styles.sheetActionIcon}><Ionicons name="search" size={20} color="#d6e4e8" /></View><Text style={styles.sheetActionText}>More from this artist</Text><Ionicons name="chevron-forward" size={18} color="#526168" /></Pressable>
+            </Animated.View>
+          </Animated.View>
+        ) : null}
         {showNowPlaying ? (
           <Animated.View style={[styles.fullPlayer, {
             opacity: fullPlayerMotion,
@@ -858,7 +919,14 @@ export default function App() {
         {toast ? <View style={styles.toast}><Ionicons name="checkmark-circle" size={20} color="#58d68d" /><Text style={styles.toastText}>{toast}</Text></View> : null}
       </SafeAreaView>
     </ImageBackground>
-    {introVisible ? <View style={styles.intro}><Image source={require("./assets/saanjh-logo.png")} style={styles.introLogo} /></View> : null}
+    {introVisible ? <View style={styles.intro}>
+      <Animated.View style={[styles.introContent, { opacity: introOpacity }]}>
+        <Animated.View style={[styles.introPulse, { opacity: introPulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] }), transform: [{ scale: introPulse.interpolate({ inputRange: [0, 1], outputRange: [0.72, 1.55] }) }] }]} />
+        <Animated.Image source={require("./assets/saanjh-logo.png")} style={[styles.introLogo, { transform: [{ scale: introScale }] }]} />
+        <Animated.Text style={[styles.introName, { transform: [{ translateY: introOpacity.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }] }]}>SAANJH</Animated.Text>
+        <Text style={styles.introTagline}>Music for every mood</Text>
+      </Animated.View>
+    </View> : null}
     </View>
     </SafeAreaProvider>
   );
@@ -900,8 +968,12 @@ const styles = StyleSheet.create({
   nativeWave: { position: "absolute", left: -40, right: -40, height: 80, borderTopWidth: 2, borderColor: "rgba(231, 249, 246, 0.34)", borderRadius: 200 },
   nativeWaveFar: { bottom: 250, opacity: 0.5 },
   nativeWaveNear: { bottom: 175, height: 110, opacity: 0.68 },
-  intro: { ...StyleSheet.absoluteFill, zIndex: 40, alignItems: "center", justifyContent: "center", backgroundColor: "#030303" },
-  introLogo: { width: 96, height: 96, borderRadius: 20 },
+  intro: { ...StyleSheet.absoluteFill, zIndex: 60, alignItems: "center", justifyContent: "center", backgroundColor: "#030303" },
+  introContent: { alignItems: "center", justifyContent: "center" },
+  introPulse: { position: "absolute", width: 126, height: 126, borderRadius: 63, borderWidth: 1, borderColor: "rgba(112,221,239,0.72)", backgroundColor: "rgba(243,166,117,0.09)" },
+  introLogo: { width: 92, height: 92, borderRadius: 20 },
+  introName: { color: "#fff7f0", fontSize: 22, fontWeight: "900", letterSpacing: 4, marginTop: 18 },
+  introTagline: { color: "rgba(255,213,186,0.7)", fontSize: 10, letterSpacing: 1.4, marginTop: 6, textTransform: "uppercase" },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12 },
   headerCompact: { paddingHorizontal: 16, paddingTop: 12 },
   brandRow: { flexDirection: "row", alignItems: "center", gap: 10, flexShrink: 1 },
@@ -1058,4 +1130,16 @@ const styles = StyleSheet.create({
   queueIndex: { width: 24, color: "#f3a675", fontSize: 12, textAlign: "center" },
   toast: { position: "absolute", left: 20, right: 20, bottom: 178, zIndex: 50, minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9, borderRadius: 8, backgroundColor: "#101c1f", borderWidth: 1, borderColor: "rgba(88,214,141,0.3)", elevation: 20 },
   toastText: { color: "#eef5f3", fontSize: 12, fontWeight: "800" },
+  songMenuOverlay: { ...StyleSheet.absoluteFill, zIndex: 55, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.66)" },
+  songMenuSheet: { paddingHorizontal: 18, paddingTop: 9, paddingBottom: 18, borderTopLeftRadius: 18, borderTopRightRadius: 18, backgroundColor: "#091216", borderWidth: 1, borderBottomWidth: 0, borderColor: "rgba(255,255,255,0.12)" },
+  sheetHandle: { alignSelf: "center", width: 38, height: 4, borderRadius: 2, backgroundColor: "#405056", marginBottom: 14 },
+  sheetSongHeader: { flexDirection: "row", alignItems: "center", gap: 12, paddingBottom: 15 },
+  sheetArtwork: { width: 54, height: 54, borderRadius: 7, backgroundColor: "#152126" },
+  sheetTitle: { color: "#f5f7f8", fontSize: 15, fontWeight: "900" },
+  sheetArtist: { color: "#87969c", fontSize: 12, marginTop: 4 },
+  sheetClose: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.05)" },
+  sheetDivider: { height: 1, backgroundColor: "rgba(255,255,255,0.08)", marginBottom: 5 },
+  sheetAction: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 4 },
+  sheetActionIcon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.045)" },
+  sheetActionText: { flex: 1, color: "#dce6e9", fontSize: 13, fontWeight: "700" },
 });
