@@ -33,36 +33,6 @@ function ensurePlayer() {
 }
 
 export default function App() {
-  const [playerReady, setPlayerReady] = useState(false);
-  const [startupError, setStartupError] = useState("");
-  const [startupAttempt, setStartupAttempt] = useState(0);
-
-  useEffect(() => {
-    let mounted = true;
-    setStartupError("");
-    void ensurePlayer()
-      .then(() => { if (mounted) setPlayerReady(true); })
-      .catch((error) => {
-        console.error("Audio player setup failed", error);
-        playerSetupPromise = null;
-        if (mounted) setStartupError("Audio service could not start.");
-      });
-    return () => { mounted = false; };
-  }, [startupAttempt]);
-
-  if (!playerReady) {
-    return (
-      <View style={styles.startupGate}>
-        <Image source={require("./assets/saanjh-logo.png")} style={styles.startupLogo} />
-        {startupError ? <><Text style={styles.startupError}>{startupError}</Text><Pressable style={styles.startupRetry} onPress={() => setStartupAttempt((value) => value + 1)}><Text style={styles.startupRetryText}>Retry</Text></Pressable></> : <ActivityIndicator color="#f3a675" />}
-      </View>
-    );
-  }
-
-  return <PlayerExperience />;
-}
-
-function PlayerExperience() {
   const nativePlayback = usePlaybackState();
   const progress = useProgress(500);
   const playback = {
@@ -132,6 +102,8 @@ function PlayerExperience() {
   const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
   const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
   const [playlistNameInput, setPlaylistNameInput] = useState("");
+  const [spotifyUrl, setSpotifyUrl] = useState("");
+  const [spotifyImporting, setSpotifyImporting] = useState(false);
   const [quality, setQuality] = useState<Quality>("high");
   const [sleepEndsAt, setSleepEndsAt] = useState<number | null>(null);
   const [sleepRemainingMs, setSleepRemainingMs] = useState(0);
@@ -210,30 +182,18 @@ function PlayerExperience() {
   useEffect(() => {
     FileSystem.readAsStringAsync(PLAYER_STATE_FILE).then((text) => {
       const saved = JSON.parse(text);
-      const savedRecentSongs: Song[] = Array.isArray(saved.recentSongs) ? saved.recentSongs : [];
-      const savedCurrentSong: Song | null = saved.currentSong?.id ? saved.currentSong : savedRecentSongs[0] || null;
-      setRecentSongs(savedRecentSongs);
+      setRecentSongs(Array.isArray(saved.recentSongs) ? saved.recentSongs : []);
       setSearchHistory(Array.isArray(saved.searchHistory) ? saved.searchHistory : []);
       setMyPlaylist(Array.isArray(saved.myPlaylist) ? saved.myPlaylist : []);
       setPrivatePlaylists(Array.isArray(saved.privatePlaylists) ? saved.privatePlaylists : []);
       if (["low", "standard", "high"].includes(saved.quality)) setQuality(saved.quality);
-      if (savedCurrentSong) {
-        const restoredQueue = [savedCurrentSong, ...savedRecentSongs.filter((song) => song.id !== savedCurrentSong.id)];
-        queueRef.current = restoredQueue;
-        indexRef.current = 0;
-        currentSongRef.current = savedCurrentSong;
-        setCurrentSong(savedCurrentSong);
-        void TrackPlayer.reset()
-          .then(() => TrackPlayer.add(restoredQueue.map((song) => toNativeTrack(song, saved.quality || "high"))))
-          .catch((error) => console.warn("Could not restore last song", error));
-      }
     }).catch(() => undefined).finally(() => setPlayerStateReady(true));
   }, []);
 
   useEffect(() => {
     if (!playerStateReady) return;
-    FileSystem.writeAsStringAsync(PLAYER_STATE_FILE, JSON.stringify({ currentSong, recentSongs, searchHistory, myPlaylist, privatePlaylists, quality })).catch(() => undefined);
-  }, [currentSong, myPlaylist, playerStateReady, privatePlaylists, quality, recentSongs, searchHistory]);
+    FileSystem.writeAsStringAsync(PLAYER_STATE_FILE, JSON.stringify({ recentSongs, searchHistory, myPlaylist, privatePlaylists, quality })).catch(() => undefined);
+  }, [myPlaylist, playerStateReady, privatePlaylists, quality, recentSongs, searchHistory]);
 
   useEffect(() => {
     if (!sleepEndsAt) return;
@@ -728,6 +688,48 @@ function PlayerExperience() {
     setPlaylistTargetSong(null);
   }
 
+  async function importSpotifyPlaylist() {
+    const url = spotifyUrl.trim();
+    if (!url) return;
+    setSpotifyImporting(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/spotify/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, limit: 150 }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) throw new Error(data.error || "Spotify playlist could not be imported.");
+      const spotifyTracks = Array.isArray(data.tracks) ? data.tracks : [];
+      const imported: Song[] = [];
+      for (let offset = 0; offset < spotifyTracks.length; offset += 4) {
+        const batch = spotifyTracks.slice(offset, offset + 4);
+        const matches = await Promise.all(batch.map(async (track: { title?: string; artist?: string }) => {
+          try {
+            const result = await fetchCatalog(`${track.title || ""} ${track.artist || ""}`.trim(), 4);
+            return result.songs[0] || null;
+          } catch {
+            return null;
+          }
+        }));
+        imported.push(...matches.filter((song): song is Song => Boolean(song)));
+      }
+      if (!imported.length) throw new Error("No matching playable songs were found.");
+      setPrivatePlaylists((items) => {
+        const existing = items.find((item) => item.name === "Imported Mix");
+        if (!existing) return [...items, { id: "spotify-imports", name: "Imported Mix", songs: imported }];
+        const seen = new Set(existing.songs.map((song) => song.id));
+        return items.map((item) => item.id === existing.id ? { ...item, songs: [...existing.songs, ...imported.filter((song: Song) => !seen.has(song.id))] } : item);
+      });
+      setSpotifyUrl("");
+      setToast(`${imported.length} songs added to Imported Mix`);
+    } catch (error) {
+      Alert.alert("Spotify import", error instanceof Error ? error.message : "Import failed.");
+    } finally {
+      setSpotifyImporting(false);
+    }
+  }
+
   async function addToMyPlaylist(song: Song) {
     const user = (selectedUser || profileInput || "").trim();
     if (!user) return setShowProfileSetup(true);
@@ -892,6 +894,12 @@ function PlayerExperience() {
           {playlist.songs.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false}>{playlist.songs.map((song) => <Pressable key={song.id} style={styles.shelfCard} onPress={() => playSong(song, playlist.songs)} onLongPress={() => setPrivatePlaylists((items) => items.map((item) => item.id === playlist.id ? { ...item, songs: item.songs.filter((entry) => entry.id !== song.id) } : item))}>{song.artwork ? <Image source={{ uri: song.artwork }} style={styles.shelfArt} /> : <View style={styles.shelfArt} />}<Text style={styles.shelfSong} numberOfLines={1}>{song.title}</Text></Pressable>)}</ScrollView> : <Text style={styles.privateEmpty}>No songs yet</Text>}
         </View>
       ))}
+      <View style={styles.spotifyImportCard}>
+        <View style={styles.spotifyImportTitle}><Ionicons name="link-outline" size={19} color="#58d68d" /><Text style={styles.spotifyTitleText}>Import Spotify playlist</Text></View>
+        <TextInput value={spotifyUrl} onChangeText={setSpotifyUrl} autoCapitalize="none" autoCorrect={false} placeholder="Paste public Spotify playlist link" placeholderTextColor="#68777d" style={styles.spotifyInput} />
+        <Pressable style={[styles.spotifyButton, (!spotifyUrl.trim() || spotifyImporting) && styles.spotifyButtonDisabled]} disabled={!spotifyUrl.trim() || spotifyImporting} onPress={() => void importSpotifyPlaylist()}>{spotifyImporting ? <ActivityIndicator color="#06110b" /> : <><Ionicons name="download-outline" size={18} color="#06110b" /><Text style={styles.spotifyButtonText}>Import to Imported Mix</Text></>}</Pressable>
+      </View>
+
       {librarySongs.length ? <View style={styles.librarySongList}>
         {librarySongs.map((item) => (
           <Pressable key={`${selectedUser}-${item.id}`} style={[styles.songRow, item.id === currentSong?.id && styles.songRowActive]} onPress={() => playSong(item, librarySongs)} onLongPress={() => showSongMenu(item)}>
@@ -1123,11 +1131,6 @@ function formatRemaining(milliseconds: number) {
 }
 
 const styles = StyleSheet.create({
-  startupGate: { flex: 1, alignItems: "center", justifyContent: "center", gap: 20, backgroundColor: "#030303" },
-  startupLogo: { width: 92, height: 92, borderRadius: 20 },
-  startupError: { color: "#d8e1e4", fontSize: 14 },
-  startupRetry: { minWidth: 104, height: 42, alignItems: "center", justifyContent: "center", borderRadius: 21, backgroundColor: "#f3a675" },
-  startupRetryText: { color: "#071014", fontSize: 12, fontWeight: "900" },
   appRoot: { flex: 1, backgroundColor: "#030303" },
   background: { flex: 1, backgroundColor: "#071014" },
   backdrop: { ...StyleSheet.absoluteFill, backgroundColor: "rgba(4, 10, 13, 0.68)" },
@@ -1240,6 +1243,13 @@ const styles = StyleSheet.create({
   privatePlaylistTitle: { flex: 1, color: "#eef4f6", fontSize: 13, fontWeight: "900", marginLeft: 8 },
   privatePlaylistCount: { color: "#718087", fontSize: 11 },
   privateEmpty: { color: "#718087", fontSize: 11, paddingVertical: 8 },
+  spotifyImportCard: { marginBottom: 16, padding: 12, borderRadius: 8, backgroundColor: "rgba(7,16,19,0.82)", borderWidth: 1, borderColor: "rgba(88,214,141,0.22)" },
+  spotifyImportTitle: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 },
+  spotifyTitleText: { color: "#eaf3ef", fontSize: 13, fontWeight: "900" },
+  spotifyInput: { height: 43, borderRadius: 7, paddingHorizontal: 11, backgroundColor: "#0d171b", borderWidth: 1, borderColor: "#26353a", color: "#edf4f6", fontSize: 12 },
+  spotifyButton: { height: 42, marginTop: 9, borderRadius: 7, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, backgroundColor: "#58d68d" },
+  spotifyButtonDisabled: { opacity: 0.45 },
+  spotifyButtonText: { color: "#06110b", fontSize: 11, fontWeight: "900" },
   profileScroller: { flexGrow: 0, maxHeight: 54, marginBottom: 4 },
   profileList: { height: 50, alignItems: "center", paddingHorizontal: 4 },
   profilePill: { height: 38, justifyContent: "center", paddingHorizontal: 15, marginRight: 8, borderRadius: 19, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", backgroundColor: "rgba(7,13,15,0.82)" },
