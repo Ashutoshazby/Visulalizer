@@ -122,17 +122,38 @@ export default function App() {
   useEffect(() => {
     FileSystem.readAsStringAsync(PLAYER_STATE_FILE).then((text) => {
       const saved = JSON.parse(text);
-      setRecentSongs(Array.isArray(saved.recentSongs) ? saved.recentSongs : []);
+      const restoredRecent: Song[] = Array.isArray(saved.recentSongs) ? saved.recentSongs : [];
+      const restoredSong: Song | null = saved.currentSong?.id ? saved.currentSong : restoredRecent[0] || null;
+      const restoredQuality: Quality = ["low", "standard", "high"].includes(saved.quality) ? saved.quality : "high";
+      setRecentSongs(restoredRecent);
       setSearchHistory(Array.isArray(saved.searchHistory) ? saved.searchHistory : []);
       setMyPlaylist(Array.isArray(saved.myPlaylist) ? saved.myPlaylist : []);
-      if (["low", "standard", "high"].includes(saved.quality)) setQuality(saved.quality);
+      setQuality(restoredQuality);
+      if (restoredSong) {
+        const restoredQueue = [restoredSong, ...restoredRecent.filter((song) => song.id !== restoredSong.id)];
+        queueRef.current = restoredQueue;
+        indexRef.current = 0;
+        currentSongRef.current = restoredSong;
+        setCurrentSong(restoredSong);
+        player.replace(streamUrl(restoredSong.id, restoredQuality));
+        player.setActiveForLockScreen(true, {
+          title: restoredSong.title,
+          artist: restoredSong.artist || "Saanjh Music",
+          albumTitle: restoredSong.album || "Saanjh mix",
+          artworkUrl: restoredSong.artwork,
+        }, {
+          showSeekBackward: true,
+          showSeekForward: true,
+          isLiveStream: false,
+        });
+      }
     }).catch(() => undefined).finally(() => setPlayerStateReady(true));
-  }, []);
+  }, [player]);
 
   useEffect(() => {
     if (!playerStateReady) return;
-    FileSystem.writeAsStringAsync(PLAYER_STATE_FILE, JSON.stringify({ recentSongs, searchHistory, myPlaylist, quality })).catch(() => undefined);
-  }, [myPlaylist, playerStateReady, quality, recentSongs, searchHistory]);
+    FileSystem.writeAsStringAsync(PLAYER_STATE_FILE, JSON.stringify({ currentSong, recentSongs, searchHistory, myPlaylist, quality })).catch(() => undefined);
+  }, [currentSong, myPlaylist, playerStateReady, quality, recentSongs, searchHistory]);
 
   useEffect(() => {
     if (!sleepEndsAt) return;
