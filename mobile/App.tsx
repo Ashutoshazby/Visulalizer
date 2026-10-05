@@ -1,9 +1,9 @@
 import * as FileSystem from "expo-file-system/legacy";
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, AppState, BackHandler, Easing, FlatList, Image, ImageBackground, Keyboard, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import TrackPlayer, { AppKilledPlaybackBehavior, Capability, Event, RepeatMode as NativeRepeatMode, State, usePlaybackState, useProgress, useTrackPlayerEvents } from "react-native-track-player";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE || "https://saanjh-music-api.night-drive-radio.workers.dev";
 const PROFILE_FILE = `${FileSystem.documentDirectory ?? "file:///"}saanjh-profile.json`;
@@ -14,10 +14,34 @@ type Playlist = { id: string; title: string; subtitle?: string; artwork?: string
 type TabKey = "home" | "library";
 type RepeatMode = "off" | "all" | "one";
 type Quality = "low" | "standard" | "high";
+type PrivatePlaylist = { id: string; name: string; songs: Song[] };
+type LyricLine = { time: number; text: string };
+
+let playerSetupPromise: Promise<void> | null = null;
+
+function ensurePlayer() {
+  if (!playerSetupPromise) {
+    playerSetupPromise = TrackPlayer.setupPlayer({ waitForBuffer: true }).then(() => TrackPlayer.updateOptions({
+      android: { appKilledPlaybackBehavior: AppKilledPlaybackBehavior.ContinuePlayback },
+      capabilities: [Capability.Play, Capability.Pause, Capability.SkipToNext, Capability.SkipToPrevious, Capability.SeekTo],
+      notificationCapabilities: [Capability.Play, Capability.Pause, Capability.SkipToNext, Capability.SkipToPrevious, Capability.SeekTo],
+      compactCapabilities: [Capability.SkipToPrevious, Capability.Play, Capability.Pause, Capability.SkipToNext],
+      progressUpdateEventInterval: 1,
+    }));
+  }
+  return playerSetupPromise;
+}
 
 export default function App() {
-  const player = useAudioPlayer(null, { updateInterval: 500 });
-  const playback = useAudioPlayerStatus(player);
+  const nativePlayback = usePlaybackState();
+  const progress = useProgress(500);
+  const playback = {
+    playing: nativePlayback.state === State.Playing,
+    isBuffering: nativePlayback.state === State.Buffering || nativePlayback.state === State.Loading,
+    currentTime: progress.position,
+    duration: progress.duration,
+    error: nativePlayback.state === State.Error ? "Playback failed" : "",
+  };
   const queueRef = useRef<Song[]>([]);
   const indexRef = useRef(-1);
   const progressWidth = useRef(1);
@@ -37,6 +61,7 @@ export default function App() {
   const swipeStartRef = useRef(0);
   const lyricsRequestRef = useRef(0);
   const relatedRequestRef = useRef(0);
+  const lyricsScrollRef = useRef<ScrollView>(null);
   const waveMotion = useRef(new Animated.Value(0)).current;
   const fullPlayerMotion = useRef(new Animated.Value(0)).current;
   const songMenuMotion = useRef(new Animated.Value(0)).current;
@@ -66,11 +91,19 @@ export default function App() {
   const [showNowPlaying, setShowNowPlaying] = useState(false);
   const [playerPanel, setPlayerPanel] = useState<"lyrics" | "queue">("lyrics");
   const [lyrics, setLyrics] = useState("");
+  const [syncedLyrics, setSyncedLyrics] = useState<LyricLine[]>([]);
   const [lyricsCredit, setLyricsCredit] = useState("");
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [recentSongs, setRecentSongs] = useState<Song[]>([]);
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
   const [myPlaylist, setMyPlaylist] = useState<Song[]>([]);
+  const [privatePlaylists, setPrivatePlaylists] = useState<PrivatePlaylist[]>([]);
+  const [playlistTargetSong, setPlaylistTargetSong] = useState<Song | null>(null);
+  const [showPlaylistPicker, setShowPlaylistPicker] = useState(false);
+  const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
+  const [playlistNameInput, setPlaylistNameInput] = useState("");
+  const [spotifyUrl, setSpotifyUrl] = useState("");
+  const [spotifyImporting, setSpotifyImporting] = useState(false);
   const [quality, setQuality] = useState<Quality>("high");
   const [sleepEndsAt, setSleepEndsAt] = useState<number | null>(null);
   const [sleepRemainingMs, setSleepRemainingMs] = useState(0);
@@ -104,6 +137,33 @@ export default function App() {
     });
   }, [songMenuMotion]);
 
+  useTrackPlayerEvents([Event.PlaybackActiveTrackChanged, Event.PlaybackError], (event) => {
+    if (event.type === Event.PlaybackError) {
+      console.warn("Playback failed", event);
+      setMessage("This song could not play. Try another track.");
+      return;
+    }
+    const songId = String(event.track?.id || "");
+    const nextIndex = queueRef.current.findIndex((item) => item.id === songId);
+    if (nextIndex < 0) return;
+    const song = queueRef.current[nextIndex];
+    indexRef.current = nextIndex;
+    currentSongRef.current = song;
+    setCurrentSong(song);
+    setRecentSongs((items) => [song, ...items.filter((item) => item.id !== song.id)].slice(0, 30));
+  });
+
+  useEffect(() => {
+    const nativeMode = repeatMode === "one" ? NativeRepeatMode.Track : repeatMode === "all" ? NativeRepeatMode.Queue : NativeRepeatMode.Off;
+    void ensurePlayer().then(() => TrackPlayer.setRepeatMode(nativeMode)).catch(() => undefined);
+  }, [repeatMode]);
+
+  const activeLyricIndex = syncedLyrics.reduce((active, line, index) => line.time <= playback.currentTime + 0.15 ? index : active, -1);
+  useEffect(() => {
+    if (activeLyricIndex < 0 || !showNowPlaying || playerPanel !== "lyrics") return;
+    lyricsScrollRef.current?.scrollTo({ y: Math.max(0, activeLyricIndex * 42 - 100), animated: true });
+  }, [activeLyricIndex, playerPanel, showNowPlaying]);
+
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
   useEffect(() => { selectedUserRef.current = selectedUser; }, [selectedUser]);
   useEffect(() => { profileModalRef.current = showProfileSetup; }, [showProfileSetup]);
@@ -125,30 +185,31 @@ export default function App() {
       setRecentSongs(Array.isArray(saved.recentSongs) ? saved.recentSongs : []);
       setSearchHistory(Array.isArray(saved.searchHistory) ? saved.searchHistory : []);
       setMyPlaylist(Array.isArray(saved.myPlaylist) ? saved.myPlaylist : []);
+      setPrivatePlaylists(Array.isArray(saved.privatePlaylists) ? saved.privatePlaylists : []);
       if (["low", "standard", "high"].includes(saved.quality)) setQuality(saved.quality);
     }).catch(() => undefined).finally(() => setPlayerStateReady(true));
   }, []);
 
   useEffect(() => {
     if (!playerStateReady) return;
-    FileSystem.writeAsStringAsync(PLAYER_STATE_FILE, JSON.stringify({ recentSongs, searchHistory, myPlaylist, quality })).catch(() => undefined);
-  }, [myPlaylist, playerStateReady, quality, recentSongs, searchHistory]);
+    FileSystem.writeAsStringAsync(PLAYER_STATE_FILE, JSON.stringify({ recentSongs, searchHistory, myPlaylist, privatePlaylists, quality })).catch(() => undefined);
+  }, [myPlaylist, playerStateReady, privatePlaylists, quality, recentSongs, searchHistory]);
 
   useEffect(() => {
     if (!sleepEndsAt) return;
     const delay = sleepEndsAt - Date.now();
     if (delay <= 0) {
-      player.pause();
+      void TrackPlayer.pause();
       setSleepEndsAt(null);
       return;
     }
     const timer = setTimeout(() => {
-      player.pause();
+      void TrackPlayer.pause();
       resumeRequestedRef.current = false;
       setSleepEndsAt(null);
     }, delay);
     return () => clearTimeout(timer);
-  }, [player, sleepEndsAt]);
+  }, [sleepEndsAt]);
 
   useEffect(() => {
     if (!sleepEndsAt) {
@@ -165,6 +226,7 @@ export default function App() {
     if (!showNowPlaying || !currentSong) return;
     const requestId = ++lyricsRequestRef.current;
     setLyrics("");
+    setSyncedLyrics([]);
     setLyricsCredit("");
     setLyricsLoading(true);
     const lyricsParams = new URLSearchParams({
@@ -177,6 +239,7 @@ export default function App() {
       .then(({ response, data }) => {
         if (requestId !== lyricsRequestRef.current) return;
         setLyrics(response.ok ? data.lyrics || "Lyrics are not available for this song." : "Lyrics are not available for this song.");
+        setSyncedLyrics(response.ok ? parseSyncedLyrics(data.syncedLyrics || "") : []);
         setLyricsCredit(data.copyright || "");
       })
       .catch(() => {
@@ -315,16 +378,15 @@ export default function App() {
   }, [fetchLibraryForUser, refreshLibraryUsers, selectedUser]);
 
   useEffect(() => {
-    setAudioModeAsync({
-      playsInSilentMode: true,
-      shouldPlayInBackground: true,
-      interruptionMode: "doNotMix",
-    }).catch((error) => console.warn("Audio mode failed", error));
+    void ensurePlayer().catch((error) => {
+      console.warn("Track player setup failed", error);
+      setMessage("Audio player could not start.");
+    });
 
     const appStateSubscription = AppState.addEventListener("change", (nextState) => {
       if (nextState === "active") {
         if (resumeRequestedRef.current && currentSongRef.current) {
-          player.play();
+          void TrackPlayer.play();
         }
         return;
       }
@@ -364,6 +426,16 @@ export default function App() {
 
   useEffect(() => {
     const exitSubscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (showCreatePlaylist) {
+        setShowCreatePlaylist(false);
+        setPlaylistTargetSong(null);
+        return true;
+      }
+      if (showPlaylistPicker) {
+        setShowPlaylistPicker(false);
+        setPlaylistTargetSong(null);
+        return true;
+      }
       if (songMenuRef.current) {
         closeSongMenu();
         return true;
@@ -387,9 +459,9 @@ export default function App() {
       return false;
     });
     return () => exitSubscription.remove();
-  }, [closeNowPlaying, closeSongMenu]);
+  }, [closeNowPlaying, closeSongMenu, showCreatePlaylist, showPlaylistPicker]);
 
-  const playSong = useCallback((song: Song, queue = queueRef.current) => {
+  const playSong = useCallback(async (song: Song, queue = queueRef.current) => {
     const index = queue.findIndex((item) => item.id === song.id);
     queueRef.current = queue;
     indexRef.current = index >= 0 ? index : 0;
@@ -399,29 +471,25 @@ export default function App() {
     currentSongRef.current = song;
     setRecentSongs((items) => [song, ...items.filter((item) => item.id !== song.id)].slice(0, 30));
     setMessage("");
-    player.replace(streamUrl(song.id, quality));
-    player.setActiveForLockScreen(true, {
-      title: song.title,
-      artist: song.artist || "Saanjh Music",
-      albumTitle: song.album || "Saanjh mix",
-      artworkUrl: song.artwork,
-    }, {
-      showSeekBackward: true,
-      showSeekForward: true,
-      isLiveStream: false,
-    });
-    player.play();
+    await ensurePlayer();
+    await TrackPlayer.reset();
+    await TrackPlayer.add(queue.map((item) => toNativeTrack(item, quality)));
+    if (index > 0) await TrackPlayer.skip(index);
+    await TrackPlayer.play();
     const requestId = ++relatedRequestRef.current;
     fetchSongs(`/api/music/related?id=${encodeURIComponent(song.id)}&limit=18`).then((related) => {
       if (requestId !== relatedRequestRef.current || currentSongRef.current?.id !== song.id) return;
       const immediateNext = queue.slice(Math.max(0, index + 1), Math.max(0, index + 4));
       const seen = new Set([song.id]);
       const upNext = [...immediateNext, ...related].filter((item) => item.id && !seen.has(item.id) && seen.add(item.id));
-      queueRef.current = [song, ...upNext];
-      indexRef.current = 0;
+      const existing = queueRef.current;
+      const existingIds = new Set(existing.map((item) => item.id));
+      const additions = upNext.filter((item) => !existingIds.has(item.id));
+      queueRef.current = [...existing, ...additions];
+      if (additions.length) void TrackPlayer.add(additions.map((item) => toNativeTrack(item, quality)));
       setQueueRevision((value) => value + 1);
     }).catch((error) => console.warn("Related songs failed", { songId: song.id, error }));
-  }, [player, quality]);
+  }, [quality]);
 
   const playAt = useCallback((index: number) => {
     const queue = queueRef.current;
@@ -430,33 +498,23 @@ export default function App() {
     playSong(queue[wrapped], queue);
   }, [playSong]);
 
-  const changeTrack = useCallback((direction: -1 | 1, fromEnded = false) => {
+  const changeTrack = useCallback(async (direction: -1 | 1) => {
     const queue = queueRef.current;
     if (!queue.length) return;
-    if (fromEnded && repeatRef.current === "one") {
-      player.seekTo(0);
-      player.play();
-      return;
-    }
     if (direction > 0 && shuffleRef.current && queue.length > 1) {
       let nextIndex = indexRef.current;
       while (nextIndex === indexRef.current) nextIndex = Math.floor(Math.random() * queue.length);
       playAt(nextIndex);
       return;
     }
-    const nextIndex = indexRef.current + direction;
-    if (fromEnded && repeatRef.current === "off" && nextIndex >= queue.length) {
-      resumeRequestedRef.current = false;
-      return;
+    try {
+      if (direction > 0) await TrackPlayer.skipToNext();
+      else await TrackPlayer.skipToPrevious();
+      await TrackPlayer.play();
+    } catch {
+      if (repeatRef.current === "all") await playAt(direction > 0 ? 0 : queue.length - 1);
     }
-    playAt(nextIndex);
-  }, [playAt, player]);
-
-  useEffect(() => {
-    if (!playback.didJustFinish || !currentSong || finishedSongRef.current === currentSong.id) return;
-    finishedSongRef.current = currentSong.id;
-    changeTrack(1, true);
-  }, [changeTrack, currentSong, playback.didJustFinish]);
+  }, [playAt]);
 
   useEffect(() => {
     if (!playback.error) return;
@@ -527,19 +585,19 @@ export default function App() {
       return;
     }
     if (playback.playing) {
-      player.pause();
+      void TrackPlayer.pause();
       resumeRequestedRef.current = false;
       return;
     }
 
     resumeRequestedRef.current = true;
-    player.play();
+    void TrackPlayer.play();
   }
 
   function seek(locationX: number) {
     if (!playback.duration) return;
     const ratio = Math.max(0, Math.min(1, locationX / progressWidth.current));
-    player.seekTo(playback.duration * ratio);
+    void TrackPlayer.seekTo(playback.duration * ratio);
   }
 
   const switchProfile = useCallback(async (name: string) => {
@@ -593,14 +651,83 @@ export default function App() {
     setRepeatMode((current) => current === "off" ? "all" : current === "all" ? "one" : "off");
   }
 
-  function addNext(song: Song) {
+  async function addNext(song: Song) {
     const queue = [...queueRef.current];
     const existing = queue.findIndex((item) => item.id === song.id);
-    if (existing >= 0) queue.splice(existing, 1);
-    queue.splice(Math.max(0, indexRef.current + 1), 0, song);
+    if (existing >= 0) {
+      queue.splice(existing, 1);
+      await TrackPlayer.remove(existing).catch(() => undefined);
+    }
+    const nextIndex = Math.max(0, indexRef.current + 1);
+    queue.splice(nextIndex, 0, song);
     queueRef.current = queue;
+    await ensurePlayer();
+    await TrackPlayer.add(toNativeTrack(song, quality), nextIndex);
     setQueueRevision((value) => value + 1);
     setToast(`${song.title} will play next`);
+  }
+
+  function saveToPrivatePlaylist(song: Song, playlistId: string) {
+    setPrivatePlaylists((items) => items.map((playlist) => playlist.id === playlistId
+      ? { ...playlist, songs: [song, ...playlist.songs.filter((item) => item.id !== song.id)] }
+      : playlist));
+    setShowPlaylistPicker(false);
+    setPlaylistTargetSong(null);
+    const playlist = privatePlaylists.find((item) => item.id === playlistId);
+    setToast(`Saved to ${playlist?.name || "private playlist"}`);
+  }
+
+  function createPrivatePlaylist() {
+    const name = playlistNameInput.trim();
+    if (!name) return;
+    const playlist: PrivatePlaylist = { id: `private-${Date.now()}`, name: name.slice(0, 36), songs: playlistTargetSong ? [playlistTargetSong] : [] };
+    setPrivatePlaylists((items) => [...items, playlist]);
+    setPlaylistNameInput("");
+    setShowCreatePlaylist(false);
+    if (playlistTargetSong) setToast(`Saved to ${playlist.name}`);
+    setPlaylistTargetSong(null);
+  }
+
+  async function importSpotifyPlaylist() {
+    const url = spotifyUrl.trim();
+    if (!url) return;
+    setSpotifyImporting(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/spotify/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, limit: 150 }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) throw new Error(data.error || "Spotify playlist could not be imported.");
+      const spotifyTracks = Array.isArray(data.tracks) ? data.tracks : [];
+      const imported: Song[] = [];
+      for (let offset = 0; offset < spotifyTracks.length; offset += 4) {
+        const batch = spotifyTracks.slice(offset, offset + 4);
+        const matches = await Promise.all(batch.map(async (track: { title?: string; artist?: string }) => {
+          try {
+            const result = await fetchCatalog(`${track.title || ""} ${track.artist || ""}`.trim(), 4);
+            return result.songs[0] || null;
+          } catch {
+            return null;
+          }
+        }));
+        imported.push(...matches.filter((song): song is Song => Boolean(song)));
+      }
+      if (!imported.length) throw new Error("No matching playable songs were found.");
+      setPrivatePlaylists((items) => {
+        const existing = items.find((item) => item.name === "Imported Mix");
+        if (!existing) return [...items, { id: "spotify-imports", name: "Imported Mix", songs: imported }];
+        const seen = new Set(existing.songs.map((song) => song.id));
+        return items.map((item) => item.id === existing.id ? { ...item, songs: [...existing.songs, ...imported.filter((song: Song) => !seen.has(song.id))] } : item);
+      });
+      setSpotifyUrl("");
+      setToast(`${imported.length} songs added to Imported Mix`);
+    } catch (error) {
+      Alert.alert("Spotify import", error instanceof Error ? error.message : "Import failed.");
+    } finally {
+      setSpotifyImporting(false);
+    }
   }
 
   async function addToMyPlaylist(song: Song) {
@@ -739,7 +866,7 @@ export default function App() {
   );
 
   const renderLibraryView = () => (
-    <View style={styles.libraryWrap}>
+    <ScrollView style={styles.libraryWrap} contentContainerStyle={styles.libraryContent} showsVerticalScrollIndicator={false}>
       <View style={styles.libraryHeader}>
         <View>
           <Text style={styles.libraryTitle}>Shared library</Text>
@@ -760,21 +887,30 @@ export default function App() {
       {recentSongs.length ? <View style={styles.libraryShelf}><Text style={styles.shelfTitle}>Recently played</Text><ScrollView horizontal showsHorizontalScrollIndicator={false}>{recentSongs.slice(0, 10).map((song) => <Pressable key={song.id} style={styles.shelfCard} onPress={() => playSong(song, recentSongs)} onLongPress={() => showSongMenu(song)}>{song.artwork ? <Image source={{ uri: song.artwork }} style={styles.shelfArt} /> : <View style={styles.shelfArt} />}<Text style={styles.shelfSong} numberOfLines={1}>{song.title}</Text></Pressable>)}</ScrollView></View> : null}
       <View style={styles.libraryShelf}><Text style={styles.shelfTitle}>{selectedUser ? `${selectedUser}'s shared playlist` : "Shared playlist"}</Text>{myPlaylist.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false}>{myPlaylist.slice(0, 20).map((song) => <Pressable key={song.id} style={styles.shelfCard} onPress={() => playSong(song, myPlaylist)} onLongPress={() => void removeFromSharedPlaylist(song)}>{song.artwork ? <Image source={{ uri: song.artwork }} style={styles.shelfArt} /> : <View style={styles.shelfArt} />}<Text style={styles.shelfSong} numberOfLines={1}>{song.title}</Text></Pressable>)}</ScrollView> : <View style={styles.emptyLibraryRow}><View style={styles.emptyLibraryIcon}><Ionicons name="musical-notes-outline" size={20} color="#70ddef" /></View><View><Text style={styles.emptyLibraryTitle}>Playlist is empty</Text><Text style={styles.emptyLibraryText}>Long-press any song and add it here.</Text></View></View>}</View>
 
-      <FlatList
-        data={librarySongs}
-        keyExtractor={(item) => `${selectedUser}-${item.id}`}
-        contentContainerStyle={styles.list}
-        showsVerticalScrollIndicator={false}
-        renderItem={({ item }) => (
-          <Pressable style={[styles.songRow, item.id === currentSong?.id && styles.songRowActive]} onPress={() => playSong(item, librarySongs)} onLongPress={() => showSongMenu(item)}>
+      <View style={styles.privateHeader}><View><Text style={styles.shelfTitle}>Private playlists</Text><Text style={styles.privateHint}>Only on this phone</Text></View><Pressable style={styles.newPlaylistButton} onPress={() => { setPlaylistTargetSong(null); setPlaylistNameInput(""); setShowCreatePlaylist(true); }}><Ionicons name="add" size={18} color="#071014" /><Text style={styles.newPlaylistText}>New</Text></Pressable></View>
+      {privatePlaylists.map((playlist) => (
+        <View key={playlist.id} style={styles.privatePlaylistBlock}>
+          <View style={styles.privatePlaylistTitleRow}><View style={styles.privateLock}><Ionicons name="lock-closed" size={13} color="#f3a675" /></View><Text style={styles.privatePlaylistTitle}>{playlist.name}</Text><Text style={styles.privatePlaylistCount}>{playlist.songs.length}</Text></View>
+          {playlist.songs.length ? <ScrollView horizontal showsHorizontalScrollIndicator={false}>{playlist.songs.map((song) => <Pressable key={song.id} style={styles.shelfCard} onPress={() => playSong(song, playlist.songs)} onLongPress={() => setPrivatePlaylists((items) => items.map((item) => item.id === playlist.id ? { ...item, songs: item.songs.filter((entry) => entry.id !== song.id) } : item))}>{song.artwork ? <Image source={{ uri: song.artwork }} style={styles.shelfArt} /> : <View style={styles.shelfArt} />}<Text style={styles.shelfSong} numberOfLines={1}>{song.title}</Text></Pressable>)}</ScrollView> : <Text style={styles.privateEmpty}>No songs yet</Text>}
+        </View>
+      ))}
+      <View style={styles.spotifyImportCard}>
+        <View style={styles.spotifyImportTitle}><Ionicons name="link-outline" size={19} color="#58d68d" /><Text style={styles.spotifyTitleText}>Import Spotify playlist</Text></View>
+        <TextInput value={spotifyUrl} onChangeText={setSpotifyUrl} autoCapitalize="none" autoCorrect={false} placeholder="Paste public Spotify playlist link" placeholderTextColor="#68777d" style={styles.spotifyInput} />
+        <Pressable style={[styles.spotifyButton, (!spotifyUrl.trim() || spotifyImporting) && styles.spotifyButtonDisabled]} disabled={!spotifyUrl.trim() || spotifyImporting} onPress={() => void importSpotifyPlaylist()}>{spotifyImporting ? <ActivityIndicator color="#06110b" /> : <><Ionicons name="download-outline" size={18} color="#06110b" /><Text style={styles.spotifyButtonText}>Import to Imported Mix</Text></>}</Pressable>
+      </View>
+
+      {librarySongs.length ? <View style={styles.librarySongList}>
+        {librarySongs.map((item) => (
+          <Pressable key={`${selectedUser}-${item.id}`} style={[styles.songRow, item.id === currentSong?.id && styles.songRowActive]} onPress={() => playSong(item, librarySongs)} onLongPress={() => showSongMenu(item)}>
             {item.artwork ? <Image source={{ uri: item.artwork }} style={styles.thumb} /> : <View style={styles.thumbFallback}><Text style={styles.note}>♪</Text></View>}
             <View style={styles.songCopy}><Text style={styles.songTitle} numberOfLines={1}>{item.title}</Text><Text style={styles.songArtist} numberOfLines={1}>{item.artist || item.album || "Unknown artist"}</Text></View>
             <Pressable style={styles.rowHeart} onPress={(event) => { event.stopPropagation(); void toggleFavorite(item); }}><Ionicons name="heart" size={19} color="#58d68d" /></Pressable>
             <Ionicons name={item.id === currentSong?.id && playback.playing ? "pause" : "play"} size={17} color="#70ddef" style={styles.rowAction} />
           </Pressable>
-        )}
-      />
-    </View>
+        ))}
+      </View> : null}
+    </ScrollView>
   );
 
   return (
@@ -872,6 +1008,21 @@ export default function App() {
             </View>
           </View>
         ) : null}
+        {showPlaylistPicker && playlistTargetSong ? (
+          <View style={styles.playlistModalOverlay}>
+            <Pressable style={StyleSheet.absoluteFill} onPress={() => { setShowPlaylistPicker(false); setPlaylistTargetSong(null); }} />
+            <View style={styles.playlistPickerCard}>
+              <View style={styles.playlistPickerHeader}><View><Text style={styles.playlistPickerTitle}>Save privately</Text><Text style={styles.playlistPickerSubtitle} numberOfLines={1}>{playlistTargetSong.title}</Text></View><Pressable style={styles.sheetClose} onPress={() => { setShowPlaylistPicker(false); setPlaylistTargetSong(null); }}><Ionicons name="close" size={21} color="#aab7bc" /></Pressable></View>
+              {privatePlaylists.map((playlist) => <Pressable key={playlist.id} style={styles.playlistChoice} onPress={() => saveToPrivatePlaylist(playlistTargetSong, playlist.id)}><View style={styles.sheetActionIcon}><Ionicons name="lock-closed-outline" size={18} color="#f3a675" /></View><View style={styles.songCopy}><Text style={styles.playlistChoiceName}>{playlist.name}</Text><Text style={styles.playlistChoiceCount}>{playlist.songs.length} songs</Text></View><Ionicons name="add-circle-outline" size={21} color="#70ddef" /></Pressable>)}
+              <Pressable style={styles.createPlaylistChoice} onPress={() => { setShowPlaylistPicker(false); setPlaylistNameInput(""); setShowCreatePlaylist(true); }}><Ionicons name="add" size={20} color="#071014" /><Text style={styles.createPlaylistChoiceText}>Create new playlist</Text></Pressable>
+            </View>
+          </View>
+        ) : null}
+        {showCreatePlaylist ? (
+          <View style={styles.playlistModalOverlay}>
+            <View style={styles.createPlaylistCard}><Text style={styles.playlistPickerTitle}>New private playlist</Text><TextInput value={playlistNameInput} onChangeText={setPlaylistNameInput} autoFocus maxLength={36} placeholder="Playlist name" placeholderTextColor="#718087" style={styles.profileInput} /><View style={styles.profileActions}><Pressable style={styles.cancelButton} onPress={() => { setShowCreatePlaylist(false); setPlaylistTargetSong(null); }}><Text style={styles.cancelButtonText}>Cancel</Text></Pressable><Pressable style={styles.saveProfileButton} onPress={createPrivatePlaylist}><Text style={styles.saveProfileButtonText}>Create</Text></Pressable></View></View>
+          </View>
+        ) : null}
         {actionSong ? (
           <Animated.View style={[styles.songMenuOverlay, { opacity: songMenuMotion }]}>
             <Pressable style={StyleSheet.absoluteFill} onPress={closeSongMenu} />
@@ -886,7 +1037,8 @@ export default function App() {
               </View>
               <View style={styles.sheetDivider} />
               <Pressable style={styles.sheetAction} onPress={() => { const song = actionSong; closeSongMenu(); void toggleFavorite(song); }}><View style={styles.sheetActionIcon}><Ionicons name={favoriteIds.has(actionSong.id) ? "heart" : "heart-outline"} size={21} color={favoriteIds.has(actionSong.id) ? "#58d68d" : "#f3a675"} /></View><Text style={styles.sheetActionText}>{favoriteIds.has(actionSong.id) ? "Remove from favorites" : "Save to favorites"}</Text><Ionicons name="chevron-forward" size={18} color="#526168" /></Pressable>
-              <Pressable style={styles.sheetAction} onPress={() => { const song = actionSong; closeSongMenu(); void addToMyPlaylist(song); }}><View style={styles.sheetActionIcon}><Ionicons name="add-circle-outline" size={22} color="#70ddef" /></View><Text style={styles.sheetActionText}>Add to my playlist</Text><Ionicons name="chevron-forward" size={18} color="#526168" /></Pressable>
+              <Pressable style={styles.sheetAction} onPress={() => { const song = actionSong; closeSongMenu(); void addToMyPlaylist(song); }}><View style={styles.sheetActionIcon}><Ionicons name="people-outline" size={21} color="#70ddef" /></View><Text style={styles.sheetActionText}>Save to shared playlist</Text><Ionicons name="chevron-forward" size={18} color="#526168" /></Pressable>
+              <Pressable style={styles.sheetAction} onPress={() => { const song = actionSong; closeSongMenu(); setPlaylistTargetSong(song); setShowPlaylistPicker(true); }}><View style={styles.sheetActionIcon}><Ionicons name="lock-closed-outline" size={20} color="#f3a675" /></View><Text style={styles.sheetActionText}>Save to private playlist</Text><Ionicons name="chevron-forward" size={18} color="#526168" /></Pressable>
               <Pressable style={styles.sheetAction} onPress={() => { const song = actionSong; closeSongMenu(); addNext(song); }}><View style={styles.sheetActionIcon}><Ionicons name="play-skip-forward-outline" size={21} color="#d6e4e8" /></View><Text style={styles.sheetActionText}>Play next</Text><Ionicons name="chevron-forward" size={18} color="#526168" /></Pressable>
               <Pressable style={styles.sheetAction} onPress={() => { const artist = (actionSong.artist || "").split(",")[0]; closeSongMenu(); setQuery(artist); setActiveTab("home"); }}><View style={styles.sheetActionIcon}><Ionicons name="search" size={20} color="#d6e4e8" /></View><Text style={styles.sheetActionText}>More from this artist</Text><Ionicons name="chevron-forward" size={18} color="#526168" /></Pressable>
             </Animated.View>
@@ -913,7 +1065,7 @@ export default function App() {
             </View>
             <View style={styles.toolRow}><Pressable style={styles.toolButton} onPress={chooseSleepTimer}><Ionicons name="moon-outline" size={19} color={sleepEndsAt ? "#70ddef" : "#b8c5c9"} /><Text style={styles.toolText}>{sleepEndsAt ? formatRemaining(sleepRemainingMs) : "Sleep"}</Text></Pressable><Pressable style={styles.toolButton} onPress={cycleQuality}><Ionicons name="options-outline" size={19} color="#b8c5c9" /><Text style={styles.toolText}>{quality}</Text></Pressable><Pressable style={styles.toolButton} onPress={() => setPlayerPanel("queue")}><Ionicons name="list" size={20} color="#b8c5c9" /><Text style={styles.toolText}>Queue</Text></Pressable></View>
             <View style={styles.panelTabs}><Pressable style={[styles.panelTab, playerPanel === "lyrics" && styles.panelTabActive]} onPress={() => setPlayerPanel("lyrics")}><Text style={styles.panelTabText}>Lyrics</Text></Pressable><Pressable style={[styles.panelTab, playerPanel === "queue" && styles.panelTabActive]} onPress={() => setPlayerPanel("queue")}><Text style={styles.panelTabText}>Up next</Text></Pressable></View>
-            {playerPanel === "lyrics" ? <ScrollView style={styles.panelBody} contentContainerStyle={styles.lyricsBody}>{lyricsLoading ? <ActivityIndicator color="#70ddef" /> : <Text style={styles.lyricsText}>{lyrics || "Lyrics are not available for this song."}</Text>}{lyricsCredit ? <Text style={styles.lyricsCredit}>{lyricsCredit}</Text> : null}</ScrollView> : <ScrollView style={styles.panelBody}>{queueRef.current.map((song, index) => <Pressable key={`${song.id}-${index}`} style={[styles.queueRow, index === indexRef.current && styles.queueRowActive]} onPress={() => playAt(index)}><Text style={styles.queueIndex}>{index === indexRef.current ? "•" : index + 1}</Text><View style={styles.songCopy}><Text style={styles.songTitle} numberOfLines={1}>{song.title}</Text><Text style={styles.songArtist} numberOfLines={1}>{song.artist}</Text></View><Pressable onPress={(event) => { event.stopPropagation(); const queue = [...queueRef.current]; queue.splice(index, 1); queueRef.current = queue; setQueueRevision((value) => value + 1); }}><Ionicons name="close" size={19} color="#839197" /></Pressable></Pressable>)}</ScrollView>}
+            {playerPanel === "lyrics" ? <ScrollView ref={lyricsScrollRef} style={styles.panelBody} contentContainerStyle={styles.lyricsBody}>{lyricsLoading ? <ActivityIndicator color="#70ddef" /> : syncedLyrics.length ? syncedLyrics.map((line, index) => <Pressable key={`${line.time}-${index}`} onPress={() => void TrackPlayer.seekTo(line.time)}><Text style={[styles.syncedLyricLine, index === activeLyricIndex && styles.syncedLyricActive, index < activeLyricIndex && styles.syncedLyricPast]}>{line.text}</Text></Pressable>) : <Text style={styles.lyricsText}>{lyrics || "Lyrics are not available for this song."}</Text>}{lyricsCredit ? <Text style={styles.lyricsCredit}>{lyricsCredit}</Text> : null}</ScrollView> : <ScrollView style={styles.panelBody}>{queueRef.current.map((song, index) => <Pressable key={`${song.id}-${index}`} style={[styles.queueRow, index === indexRef.current && styles.queueRowActive]} onPress={() => playAt(index)}><Text style={styles.queueIndex}>{index === indexRef.current ? "•" : index + 1}</Text><View style={styles.songCopy}><Text style={styles.songTitle} numberOfLines={1}>{song.title}</Text><Text style={styles.songArtist} numberOfLines={1}>{song.artist}</Text></View><Pressable onPress={(event) => { event.stopPropagation(); const queue = [...queueRef.current]; queue.splice(index, 1); queueRef.current = queue; void TrackPlayer.remove(index); setQueueRevision((value) => value + 1); }}><Ionicons name="close" size={19} color="#839197" /></Pressable></Pressable>)}</ScrollView>}
           </Animated.View>
         ) : null}
         {toast ? <View style={styles.toast}><Ionicons name="checkmark-circle" size={20} color="#58d68d" /><Text style={styles.toastText}>{toast}</Text></View> : null}
@@ -950,6 +1102,24 @@ async function fetchCatalog(query: string, limit: number): Promise<{ songs: Song
 }
 
 function streamUrl(id: string, quality: Quality) { return `${API_BASE}/api/music/stream?id=${encodeURIComponent(id)}&quality=${quality}`; }
+function toNativeTrack(song: Song, quality: Quality) {
+  return {
+    id: song.id,
+    url: streamUrl(song.id, quality),
+    title: song.title,
+    artist: song.artist || "Saanjh Music",
+    album: song.album || "Saanjh mix",
+    artwork: song.artwork,
+  };
+}
+function parseSyncedLyrics(value: string): LyricLine[] {
+  return String(value || "").split(/\r?\n/).flatMap((line) => {
+    const match = line.match(/^\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]\s*(.*)$/);
+    if (!match || !match[4]?.trim()) return [];
+    const fraction = Number(`0.${match[3] || "0"}`);
+    return [{ time: Number(match[1]) * 60 + Number(match[2]) + fraction, text: match[4].trim() }];
+  }).sort((a, b) => a.time - b.time);
+}
 function formatTime(value = 0) {
   if (!Number.isFinite(value) || value <= 0) return "0:00";
   return `${Math.floor(value / 60)}:${Math.floor(value % 60).toString().padStart(2, "0")}`;
@@ -1048,6 +1218,8 @@ const styles = StyleSheet.create({
   playButtonCompact: { width: 48, height: 48, borderRadius: 24 },
   playIconOffset: { marginLeft: 3 },
   libraryWrap: { flex: 1, paddingHorizontal: 16, paddingTop: 8, backgroundColor: "rgba(3, 9, 12, 0.42)" },
+  libraryContent: { paddingBottom: 210 },
+  librarySongList: { paddingTop: 2 },
   libraryHeader: { paddingHorizontal: 6, marginBottom: 8, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   libraryTitle: { color: "#f7f3ee", fontSize: 28, fontWeight: "900" },
   libraryMeta: { color: "#d1dfe4", fontSize: 12, marginTop: 4 },
@@ -1061,6 +1233,23 @@ const styles = StyleSheet.create({
   shelfCard: { width: 92, marginRight: 10 },
   shelfArt: { width: 92, height: 92, borderRadius: 7, backgroundColor: "#111b1f" },
   shelfSong: { color: "#dfe8eb", fontSize: 11, fontWeight: "700", marginTop: 5 },
+  privateHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 9, paddingHorizontal: 4 },
+  privateHint: { color: "#75868c", fontSize: 10, marginTop: -4 },
+  newPlaylistButton: { height: 34, flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 11, borderRadius: 17, backgroundColor: "#f3a675" },
+  newPlaylistText: { color: "#071014", fontSize: 11, fontWeight: "900" },
+  privatePlaylistBlock: { marginBottom: 14, padding: 10, borderRadius: 8, backgroundColor: "rgba(7,16,19,0.72)", borderWidth: 1, borderColor: "rgba(255,255,255,0.08)" },
+  privatePlaylistTitleRow: { flexDirection: "row", alignItems: "center", marginBottom: 9 },
+  privateLock: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(243,166,117,0.12)" },
+  privatePlaylistTitle: { flex: 1, color: "#eef4f6", fontSize: 13, fontWeight: "900", marginLeft: 8 },
+  privatePlaylistCount: { color: "#718087", fontSize: 11 },
+  privateEmpty: { color: "#718087", fontSize: 11, paddingVertical: 8 },
+  spotifyImportCard: { marginBottom: 16, padding: 12, borderRadius: 8, backgroundColor: "rgba(7,16,19,0.82)", borderWidth: 1, borderColor: "rgba(88,214,141,0.22)" },
+  spotifyImportTitle: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 },
+  spotifyTitleText: { color: "#eaf3ef", fontSize: 13, fontWeight: "900" },
+  spotifyInput: { height: 43, borderRadius: 7, paddingHorizontal: 11, backgroundColor: "#0d171b", borderWidth: 1, borderColor: "#26353a", color: "#edf4f6", fontSize: 12 },
+  spotifyButton: { height: 42, marginTop: 9, borderRadius: 7, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, backgroundColor: "#58d68d" },
+  spotifyButtonDisabled: { opacity: 0.45 },
+  spotifyButtonText: { color: "#06110b", fontSize: 11, fontWeight: "900" },
   profileScroller: { flexGrow: 0, maxHeight: 54, marginBottom: 4 },
   profileList: { height: 50, alignItems: "center", paddingHorizontal: 4 },
   profilePill: { height: 38, justifyContent: "center", paddingHorizontal: 15, marginRight: 8, borderRadius: 19, borderWidth: 1, borderColor: "rgba(255,255,255,0.18)", backgroundColor: "rgba(7,13,15,0.82)" },
@@ -1124,6 +1313,9 @@ const styles = StyleSheet.create({
   panelBody: { flex: 1, marginTop: 8 },
   lyricsBody: { paddingBottom: 30 },
   lyricsText: { color: "#ecf2f3", fontSize: 18, lineHeight: 30, textAlign: "center", paddingHorizontal: 8 },
+  syncedLyricLine: { minHeight: 42, color: "#627177", fontSize: 17, lineHeight: 25, textAlign: "center", paddingHorizontal: 8, paddingVertical: 7 },
+  syncedLyricActive: { color: "#fff5ee", fontSize: 20, fontWeight: "900" },
+  syncedLyricPast: { color: "#9aa8ad" },
   lyricsCredit: { color: "#728187", fontSize: 10, textAlign: "center", marginTop: 18 },
   queueRow: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 8, borderRadius: 6 },
   queueRowActive: { backgroundColor: "rgba(243,166,117,0.13)" },
@@ -1142,4 +1334,15 @@ const styles = StyleSheet.create({
   sheetAction: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 4 },
   sheetActionIcon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.045)" },
   sheetActionText: { flex: 1, color: "#dce6e9", fontSize: 13, fontWeight: "700" },
+  playlistModalOverlay: { ...StyleSheet.absoluteFill, zIndex: 58, justifyContent: "center", alignItems: "center", padding: 20, backgroundColor: "rgba(0,0,0,0.72)" },
+  playlistPickerCard: { width: "100%", maxWidth: 430, maxHeight: "72%", padding: 16, borderRadius: 10, backgroundColor: "#091216", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" },
+  createPlaylistCard: { width: "100%", maxWidth: 400, padding: 18, borderRadius: 10, backgroundColor: "#091216", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" },
+  playlistPickerHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
+  playlistPickerTitle: { color: "#f7f9fa", fontSize: 20, fontWeight: "900", marginBottom: 4 },
+  playlistPickerSubtitle: { color: "#819096", fontSize: 11, maxWidth: 250 },
+  playlistChoice: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 10, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.06)" },
+  playlistChoiceName: { color: "#e9f0f2", fontSize: 13, fontWeight: "800" },
+  playlistChoiceCount: { color: "#718087", fontSize: 10, marginTop: 3 },
+  createPlaylistChoice: { height: 44, marginTop: 12, borderRadius: 7, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "#f3a675" },
+  createPlaylistChoiceText: { color: "#071014", fontSize: 12, fontWeight: "900" },
 });

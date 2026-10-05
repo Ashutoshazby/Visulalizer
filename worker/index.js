@@ -79,6 +79,9 @@ export default {
       if (url.pathname === "/api/music/stream" && (request.method === "GET" || request.method === "HEAD")) {
         return streamSong(request, url, provider);
       }
+      if (url.pathname === "/api/spotify/import" && request.method === "POST") {
+        return json({ ok: true, ...(await readSpotifyPlaylist(request, env)) });
+      }
       if (url.pathname === "/api/library/users" && request.method === "GET") {
         return json({ ok: true, users: await listProfiles(env.LIBRARY_DB) });
       }
@@ -273,6 +276,60 @@ async function readJson(request) {
   const type = request.headers.get("content-type") || "";
   if (!type.includes("application/json")) throw new Error("Expected an application/json request body.");
   return request.json();
+}
+
+async function readSpotifyPlaylist(request, env) {
+  if (!env.SPOTIFY_CLIENT_ID || !env.SPOTIFY_CLIENT_SECRET) {
+    throw new Error("Spotify import is not configured yet. Add SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET Worker secrets.");
+  }
+  const body = await readJson(request);
+  const playlistId = spotifyPlaylistId(body.url);
+  if (!playlistId) throw new Error("Paste a valid open.spotify.com playlist link.");
+  const tokenResponse = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST",
+    headers: {
+      "Authorization": `Basic ${btoa(`${env.SPOTIFY_CLIENT_ID}:${env.SPOTIFY_CLIENT_SECRET}`)}`,
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: "grant_type=client_credentials"
+  });
+  const tokenData = await tokenResponse.json();
+  if (!tokenResponse.ok || !tokenData.access_token) throw new Error("Spotify authorization failed.");
+
+  const limit = boundedNumber(body.limit, 100, 1, 150);
+  const tracks = [];
+  let next = `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/tracks?limit=50&market=IN`;
+  while (next && tracks.length < limit) {
+    const response = await fetch(next, { headers: { Authorization: `Bearer ${tokenData.access_token}` } });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data?.error?.message || "Spotify playlist could not be read.");
+    for (const item of data.items || []) {
+      const track = item?.track;
+      if (!track?.name || track.is_local) continue;
+      tracks.push({
+        title: String(track.name),
+        artist: (track.artists || []).map((artist) => artist.name).filter(Boolean).join(", "),
+        spotifyUrl: track.external_urls?.spotify || ""
+      });
+      if (tracks.length >= limit) break;
+    }
+    next = data.next || null;
+  }
+  return { playlistId, tracks };
+}
+
+function spotifyPlaylistId(value) {
+  const input = String(value || "").trim();
+  const uriMatch = input.match(/^spotify:playlist:([A-Za-z0-9]+)$/);
+  if (uriMatch) return uriMatch[1];
+  try {
+    const url = new URL(input);
+    if (!/(^|\.)open\.spotify\.com$/i.test(url.hostname)) return "";
+    const match = url.pathname.match(/^\/playlist\/([A-Za-z0-9]+)/);
+    return match?.[1] || "";
+  } catch {
+    return "";
+  }
 }
 
 function cleanName(value) {
