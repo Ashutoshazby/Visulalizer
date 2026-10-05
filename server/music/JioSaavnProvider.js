@@ -221,12 +221,11 @@ class JioSaavnProvider extends MusicProvider {
     if (data?.lyrics) {
       return {
         lyrics: clean(String(data.lyrics).replace(/<br\s*\/?\s*>/gi, "\n").replace(/<[^>]+>/g, "")),
-        syncedLyrics: "",
         copyright: clean(data.lyrics_copyright || "Lyrics powered by JioSaavn")
       };
     }
 
-    if (!title) return { lyrics: "", syncedLyrics: "", copyright: "" };
+    if (!title) return { lyrics: "", copyright: "" };
     const fallbackUrl = new URL("https://lrclib.net/api/search");
     fallbackUrl.searchParams.set("track_name", title);
     if (artist) fallbackUrl.searchParams.set("artist_name", artist.split(",")[0].trim());
@@ -237,7 +236,6 @@ class JioSaavnProvider extends MusicProvider {
     const lyrics = match?.plainLyrics || stripSyncedLyrics(match?.syncedLyrics || "");
     return {
       lyrics: clean(lyrics || ""),
-      syncedLyrics: String(match?.syncedLyrics || "").trim(),
       copyright: lyrics ? "Lyrics powered by LRCLIB" : ""
     };
   }
